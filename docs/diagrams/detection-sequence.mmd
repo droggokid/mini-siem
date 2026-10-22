@@ -1,0 +1,34 @@
+
+%%{init: {"theme": "dark"}}%%
+sequenceDiagram
+  actor Alice
+  participant API
+  participant DB as SQLite
+  participant DET as Detection
+  participant EV as Event
+  participant PKG as eventkit
+
+  Alice->>API: Login
+  API->>DB: Retrieve user
+  DB-->>API: User and password hash
+  API->>API: Verify password
+  API-->>Alice: User JWT
+
+  Alice->>API: Run detection
+  API->>API: Verify JWT and authorize caller's job
+  API->>DET: Job with scoped authority
+  DET->>DET: Verify service, owner, action, validity and job
+
+  DET->>EV: Request Alice's events with scoped authority
+  EV->>EV: Verify authority for service, owner, read, validity and job
+  EV-->>DET: Events
+
+  DET->>PKG: Analyze events
+  PKG-->>DET: Detection results
+
+  DET->>EV: Store alerts with scoped authority
+  EV->>EV: Verify authority for service, owner, write, validity and job
+  EV-->>DET: Success
+
+  DET-->>API: Job summary
+  API-->>Alice: Detection summary

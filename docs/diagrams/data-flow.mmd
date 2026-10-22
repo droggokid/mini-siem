@@ -1,0 +1,10 @@
+
+%%{init: {"theme": "dark"}}%%
+flowchart LR
+  U["Client"] <-->|"TB1: Login / User JWT"| API["API"]
+  API -->|"User lookup"| DB[("SQLite")]
+  API -->|"TB2: Scoped authority"| EV["Event"]
+  API -->|"TB3: Authorized job"| DET["Detection"]
+  DET <-->|"TB4: Scoped event reads / Alert writes"| EV
+  DET -->|"TB5: Analysis input"| PKG["eventkit"]
+  EV --> STORE[("Memory")]
