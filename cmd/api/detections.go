@@ -30,11 +30,13 @@ func detectionHandler(detectionURL string, jobKey ed25519.PrivateKey) gin.Handle
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
+		// Detection accepts no caller-selected owner or other query parameters.
 		if c.Request.URL.RawQuery != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameters are not supported"})
 			return
 		}
 
+		// Reject oversized input before buffering or issuing a job.
 		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 64*1024))
 		if err != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
@@ -53,6 +55,7 @@ func detectionHandler(detectionURL string, jobKey ed25519.PrivateKey) gin.Handle
 			var input *struct{}
 			decoder := json.NewDecoder(bytes.NewReader(body))
 			decoder.DisallowUnknownFields()
+			// A supplied body must be one empty object; reject null, extra fields and trailing data.
 			if !json.Valid(body) || decoder.Decode(&input) != nil || input == nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "detection accepts no parameters"})
 				return
@@ -60,6 +63,7 @@ func detectionHandler(detectionURL string, jobKey ed25519.PrivateKey) gin.Handle
 		}
 
 		jobID := rand.Text()
+		// Bind run/read/write authority to the authenticated caller, never a requested target owner.
 		run, runErr := auth.SignJob(jobKey, identity.ID, jobID, auth.DetectionService, auth.RunDetection)
 		read, readErr := auth.SignJob(jobKey, identity.ID, jobID, auth.EventService, auth.ListEvents)
 		write, writeErr := auth.SignJob(jobKey, identity.ID, jobID, auth.EventService, auth.AddAlerts)
@@ -102,6 +106,7 @@ func detectionHandler(detectionURL string, jobKey ed25519.PrivateKey) gin.Handle
 		}
 
 		data, err := io.ReadAll(response.Body)
+		// A successful service status still requires a syntactically valid JSON response.
 		if err != nil || !json.Valid(data) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "invalid Detection service response"})
 			return

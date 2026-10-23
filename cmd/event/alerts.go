@@ -15,6 +15,7 @@ import (
 )
 
 func registerAlerts(router *gin.Engine, store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKey) {
+	// Verify alert-read authority before filtering to the delegated owner's alerts.
 	router.GET("/alerts", tokens.EventMiddleware(auth.ListAlerts), func(c *gin.Context) {
 		if _, ok := readRequest(c); !ok {
 			return
@@ -28,6 +29,7 @@ func registerAlerts(router *gin.Engine, store *events.Store, tokens *auth.Tokens
 		c.JSON(http.StatusOK, alerts)
 	})
 
+	// Require alert-write job authority; ownership comes from its signed scope.
 	router.POST("/jobs/alerts", auth.JobMiddleware(jobKey, auth.EventService, auth.AddAlerts), func(c *gin.Context) {
 		body, ok := readRequest(c)
 		if !ok {
@@ -37,11 +39,13 @@ func registerAlerts(router *gin.Engine, store *events.Store, tokens *auth.Tokens
 		var inputs []events.AlertInput
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.DisallowUnknownFields()
+		// Require one non-null array of known alert fields before validating the batch.
 		if !json.Valid(body) || decoder.Decode(&inputs) != nil || inputs == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid alert request"})
 			return
 		}
 
+		// A deputy's alert payload cannot choose a different storage owner.
 		scope := auth.JobFromContext(c.Request.Context())
 		alerts, err := store.AddAlerts(scope.OwnerID, inputs)
 		if err != nil {
@@ -52,6 +56,7 @@ func registerAlerts(router *gin.Engine, store *events.Store, tokens *auth.Tokens
 	})
 }
 
+// readRequest bounds internal requests and enforces query, body and media-type rules.
 func readRequest(c *gin.Context) ([]byte, bool) {
 	if c.Request.URL.RawQuery != "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameters are not supported"})

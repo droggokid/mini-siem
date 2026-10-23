@@ -18,6 +18,7 @@ const (
 	JobHeader        = "X-Detection-Job"
 )
 
+// JobScope preserves the initiating owner and job across service boundaries.
 type JobScope struct {
 	OwnerID int64
 	JobID   string
@@ -30,6 +31,7 @@ type jobClaims struct {
 }
 
 func jobAction(service, action string) bool {
+	// Jobs never grant event submission, alert listing or cross-owner admin reads.
 	switch service {
 	case DetectionService:
 		return action == RunDetection
@@ -57,6 +59,7 @@ func SignJob(key ed25519.PrivateKey, ownerID int64, jobID, service, action strin
 	}).SignedString(key)
 }
 
+// VerifyJob authorizes the named service/action for the signed owner and job.
 func VerifyJob(key ed25519.PublicKey, raw, service, action string) (JobScope, error) {
 	var claims jobClaims
 	_, err := jwt.ParseWithClaims(raw, &claims, func(*jwt.Token) (any, error) {

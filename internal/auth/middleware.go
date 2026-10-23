@@ -17,6 +17,7 @@ func FromContext(ctx context.Context) (Identity, bool) {
 	return identity, ok
 }
 
+// Middleware authenticates the user; routes must still enforce roles and ownership.
 func (t *Tokens) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		identity, err := t.Validate(bearer(c.Request))
@@ -24,6 +25,7 @@ func (t *Tokens) Middleware() gin.HandlerFunc {
 	}
 }
 
+// EventMiddleware authorizes one exact Event action and sets its verified principal.
 func (t *Tokens) EventMiddleware(action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ownerID, err := t.ValidateEvent(bearer(c.Request), action)
@@ -38,9 +40,11 @@ func JobFromContext(ctx context.Context) JobScope {
 	return scope
 }
 
+// JobMiddleware requires delegated owner/job scope, not blanket trust in another service.
 func JobMiddleware(key ed25519.PublicKey, service, action string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		scope, err := VerifyJob(key, bearer(c.Request), service, action)
+		// Bind signed authority to this request's job; a header alone grants no permission.
 		if len(c.Request.Header.Values(JobHeader)) != 1 || c.GetHeader(JobHeader) != scope.JobID {
 			err = errors.New("mismatched job")
 		}
@@ -52,6 +56,7 @@ func JobMiddleware(key ed25519.PublicKey, service, action string) gin.HandlerFun
 
 func bearer(r *http.Request) string {
 	header := strings.Fields(r.Header.Get("Authorization"))
+	// Reject ambiguous headers instead of choosing between multiple credentials.
 	if len(r.Header.Values("Authorization")) == 1 && len(header) == 2 && strings.EqualFold(header[0], "Bearer") {
 		return header[1]
 	}

@@ -20,6 +20,7 @@ type Store struct {
 
 // Add accepts an owner ID trusted by the caller and assigns ingestion metadata.
 func (s *Store) Add(ownerID int64, eventType, sourceIP string) (Event, error) {
+	// Enforce semantic validity here so every caller is checked before storage.
 	if ownerID <= 0 {
 		return Event{}, errors.New("owner ID must be positive")
 	}
@@ -28,6 +29,7 @@ func (s *Store) Add(ownerID int64, eventType, sourceIP string) (Event, error) {
 		return Event{}, errors.New("event type must not be empty")
 	}
 
+	// Parse the address, rather than accepting a string that only resembles an IP.
 	if _, err := netip.ParseAddr(sourceIP); err != nil {
 		return Event{}, fmt.Errorf("invalid source IP: %w", err)
 	}

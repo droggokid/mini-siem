@@ -303,11 +303,10 @@ empty. Admin's ordinary submission, event/alert listing and detection continue
 to use only Admin's verified owner ID. The access-control matrix is unchanged.
 
 **Why:** The three boundaries stay distinct: API checks the role, API signs a
-narrow capability, and Event independently checks that capability. This is the
-secure baseline for the planned V1 CWE-862 experiment: removing only API's role
-check would let an ordinary user obtain privileged delegation through the normal
-path. That vulnerability is not introduced here; no redundant role check or
-experiment-specific control is added. The original SSDLC plan remains intact.
+narrow capability, and Event independently checks that capability. Event trusts
+API's user-policy decision: a valid service token cannot establish whether the
+caller should have received that authority. The [V1 authorization analysis](vulnerabilities/V1-missing-authorization.md)
+explains this boundary using the implemented checks and illustrative examples.
 
 **Tradeoff / revisit:** The shared-secret, replay, unencrypted local HTTP,
 unbounded in-memory storage and unpaginated-list limitations from DD-008 apply.

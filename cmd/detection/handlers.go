@@ -32,7 +32,9 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 		},
 	}
 
+	// Require API-issued run authority; network access alone grants no permission.
 	router.POST("/detections/run", auth.JobMiddleware(jobKey, auth.DetectionService, auth.RunDetection), func(c *gin.Context) {
+		// Validate internal requests too: API authentication does not establish payload validity.
 		if c.Request.URL.RawQuery != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameters are not supported"})
 			return
@@ -63,6 +65,7 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.DisallowUnknownFields()
 
+		// Reject null and trailing JSON before reading capability fields.
 		if !json.Valid(body) || decoder.Decode(&input) != nil || input == nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid detection request"})
 			return
@@ -71,6 +74,7 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 		scope := auth.JobFromContext(c.Request.Context())
 		readScope, readErr := auth.VerifyJob(jobKey, input.ReadToken, auth.EventService, auth.ListEvents)
 		writeScope, writeErr := auth.VerifyJob(jobKey, input.WriteToken, auth.EventService, auth.AddAlerts)
+		// Keep the deputy's run/read/write permissions bound to the same initiating owner and job.
 		if readErr != nil || writeErr != nil || readScope != scope || writeScope != scope {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid job permissions"})
 			return
@@ -81,6 +85,7 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 			OwnerID int64 `json:"owner_id"`
 			eventkit.Event
 		}
+		// Treat Event's response as input: require a non-null event array before analysis.
 		if err != nil || json.Unmarshal(data, &events) != nil || events == nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Event service unavailable"})
 			return
@@ -89,6 +94,7 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 		ruleEvents := make([]eventkit.Event, len(events))
 		for index, event := range events {
 			_, ipErr := netip.ParseAddr(event.SourceIP)
+			// Reject cross-owner data even when Event returned a successful response.
 			if event.OwnerID != scope.OwnerID || event.IngestedAt.IsZero() || ipErr != nil {
 				c.JSON(http.StatusBadGateway, gin.H{"error": "invalid Event service response"})
 				return
@@ -99,6 +105,7 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 		findings := eventkit.Detect(ruleEvents)
 		if len(findings) > 0 {
 			body, err = json.Marshal(findings)
+			// Keep generated output within Event's request limit before attempting a write.
 			if err != nil || len(body) > 64*1024 {
 				c.JSON(http.StatusBadGateway, gin.H{"error": "alert batch exceeds Event request limit"})
 				return
@@ -108,6 +115,7 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 			var result struct {
 				AlertsCreated int `json:"alerts_created"`
 			}
+			// Check the write acknowledgement matches the batch that was submitted.
 			if err != nil || json.Unmarshal(data, &result) != nil || result.AlertsCreated != len(findings) {
 				c.JSON(http.StatusBadGateway, gin.H{"error": "Event service unavailable"})
 				return
@@ -130,6 +138,7 @@ func eventRequest(c *gin.Context, client *http.Client, eventURL, method, path, t
 	if err != nil {
 		return nil, err
 	}
+	// Forward API-issued authority unchanged; Detection has no signing key to widen it.
 	r.Header.Set("Authorization", "Bearer "+token)
 	r.Header.Set(auth.JobHeader, jobID)
 	r.Header.Set("Content-Type", "application/json")

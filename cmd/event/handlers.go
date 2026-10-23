@@ -22,12 +22,14 @@ func newRouter(store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKe
 		c.String(http.StatusOK, "ok\n")
 	})
 
+	// Require add authority; the verified principal owns the new event.
 	router.POST("/events", tokens.EventMiddleware(auth.AddEvent), func(c *gin.Context) {
 		identity, ok := auth.FromContext(c.Request.Context())
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
+		// Event independently enforces its input contract, even for API-issued requests.
 		if c.Request.URL.RawQuery != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameters are not supported"})
 			return
@@ -55,12 +57,14 @@ func newRouter(store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKe
 		}
 
 		decoder := json.NewDecoder(bytes.NewReader(body))
+		// Accept only event fields; owners, IDs and timestamps are assigned by the server.
 		decoder.DisallowUnknownFields()
 		if !json.Valid(body) || decoder.Decode(&input) != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event request"})
 			return
 		}
 
+		// Store.Add checks semantic values before any event is appended.
 		event, err := store.Add(identity.ID, input.Type, input.SourceIP)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid event type or source IP"})
@@ -81,6 +85,7 @@ func newRouter(store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKe
 			return
 		}
 
+		// Enforce owner isolation for both ordinary and job reads, including Admin's.
 		owned := store.ListByOwner(identity.ID)
 		if owned == nil {
 			owned = []events.Event{}
@@ -89,7 +94,9 @@ func newRouter(store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKe
 		c.JSON(http.StatusOK, owned)
 	}
 	router.GET("/events", tokens.EventMiddleware(auth.ListEvents), listEvents)
+	// A worker's read is limited to the signed owner; being Detection grants no blanket access.
 	router.GET("/jobs/events", auth.JobMiddleware(jobKey, auth.EventService, auth.ListEvents), listEvents)
+	// Only exact list-all authority may reach the unfiltered store read.
 	router.GET("/admin/events", tokens.EventMiddleware(auth.ListAllEvents), func(c *gin.Context) {
 		if _, ok := readRequest(c); !ok {
 			return
