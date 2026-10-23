@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/droggokid/mini-siem/cmd/api/internal/users"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -29,7 +28,7 @@ func TestSignAndValidate(t *testing.T) {
 	for _, role := range []string{"user", "admin"} {
 		t.Run(role, func(t *testing.T) {
 			before := time.Now()
-			raw, err := tokens.Sign(users.User{ID: 42, Username: "Alice", Role: role})
+			raw, err := tokens.Sign(Identity{ID: 42, Role: role})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +90,7 @@ func TestValidateRejectsInvalidClaims(t *testing.T) {
 
 func TestValidateRejectsInvalidSignatures(t *testing.T) {
 	tokens, key := testTokens(t)
-	valid, err := tokens.Sign(users.User{ID: 1, Role: "user"})
+	valid, err := tokens.Sign(Identity{ID: 1, Role: "user"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +138,7 @@ func TestNewRejectsWeakSecrets(t *testing.T) {
 
 func TestNewCopiesSecret(t *testing.T) {
 	tokens, secret := testTokens(t)
-	raw, err := tokens.Sign(users.User{ID: 1, Role: "user"})
+	raw, err := tokens.Sign(Identity{ID: 1, Role: "user"})
 	if err != nil {
 		t.Fatal(err)
 	}

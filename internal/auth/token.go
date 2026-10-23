@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/droggokid/mini-siem/cmd/api/internal/users"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -33,15 +32,13 @@ func New(secret []byte) (*Tokens, error) {
 	return &Tokens{secret: append([]byte(nil), secret...)}, nil
 }
 
-func (t *Tokens) Sign(user users.User) (string, error) {
+func (t *Tokens) Sign(user Identity) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims{
-		Role: user.Role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   strconv.FormatInt(user.ID, 10),
-			Issuer:    "mini-siem",
-			Audience:  jwt.ClaimStrings{"mini-siem-api"},
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(Lifetime)),
-		},
+		Role:      user.Role,
+		Subject:   strconv.FormatInt(user.ID, 10),
+		Issuer:    "mini-siem",
+		Audience:  jwt.ClaimStrings{"mini-siem-api"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(Lifetime)),
 	}).SignedString(t.secret)
 }
 

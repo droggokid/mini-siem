@@ -51,11 +51,12 @@ values must still be bound as SQL parameters; concatenating untrusted values int
 SQL remains unsafe. Revisit if the builder stops making the queries easy to read.
 See [the users store](../cmd/api/internal/users/store.go).
 
-## DD-003 — Gin for the public API
+## DD-003 — Gin for HTTP handlers
 
 **Status:** Accepted.
 
-**Decision:** Use Gin rather than Chi for API routing and JSON responses.
+**Decision:** Use Gin rather than Chi for API routing and JSON responses. Event
+follows the same router, middleware, and handler conventions.
 
 **Why:** The developer has experience with Gin and chose it for its wider usage.
 Familiarity makes the API easier to develop and maintain.
@@ -68,21 +69,24 @@ the small API. See [API handlers](../cmd/api/handlers.go).
 
 **Status:** Accepted.
 
-**Decision:** Document terminal requests with curl instead of maintaining a
-Postman collection. Keep Go tests as the automated verification evidence.
+**Decision:** Document terminal requests with curl and maintain a portable
+Postman v2.1 collection plus local environment for Apidog/Postman users. Keep Go
+tests as the automated verification evidence.
 
-**Why:** Commands can be copied, shared, versioned, and reproduced directly from
-the repository without another GUI or account.
+**Why:** Curl commands work without a GUI or account; the collection provides
+the same requests in an API client and captures login tokens automatically.
 
 **Tradeoff / revisit:** Readers manage their own terminal variables and tokens;
-examples do not replace regression tests. Revisit if a real workflow needs a
-collection runner. See [curl examples](curl.md) and [API tests](../cmd/api/handlers_test.go).
+examples and collection assertions do not replace regression tests. Keep both
+formats aligned as endpoints change. See [curl examples](curl.md), the
+[collection](mini-siem.postman_collection.json), and [API tests](../cmd/api/handlers_test.go).
 `make verify` checks the three running services' health endpoints only.
 `make test` runs the Go tests, including authentication checks.
 
 ## DD-005 — Three Go services with a small HTTP interface
 
-**Status:** Accepted; business operations remain planned beyond login and identity.
+**Status:** Accepted; login, identity, and event submission/listing are implemented.
+Detection, alerts, and admin operations remain planned.
 
 **Decision:** Keep API, Event, and Detection as separate Go executables using
 HTTP/JSON. Detection will consume the separately versioned `eventkit` module.
@@ -98,11 +102,11 @@ See the [initial architecture and dependency plan](initial-plan.md#architecture-
 
 ## DD-006 — SQLite users, bcrypt passwords, in-memory events
 
-**Status:** Accepted; users storage exists, event and alert storage remains planned.
+**Status:** Accepted; users and in-memory event storage exist. Alert storage remains planned.
 
 **Decision:** API alone owns a persistent SQLite users database, seeded with
 Alice, Bob, and Admin. Store bcrypt hashes and preserve existing accounts on
-initialization. Event will keep events and alerts in memory.
+initialization. Event keeps events in memory; alerts will also stay in memory.
 
 **Why:** SQLite avoids a separate database service for three local demo accounts.
 Bcrypt satisfies the established password-hashing requirement. In-memory event
@@ -120,10 +124,14 @@ and the [initial scope](initial-plan.md).
 **Decision:** Run the three services with Compose. Publish only API at
 `127.0.0.1:8080`; keep Event and Detection on the backend network. Mount the users
 volume only in API, storing both the database and JWT secret there.
-`make up` builds and starts the stack; API loads or generates the secret on startup.
+Use a separate `event-auth` volume for API-to-Event authority, writable only by
+API and mounted read-only by Event. Detection receives neither volume.
+`make up` builds and starts the stack; API loads or generates both independent
+secrets on startup. Event starts after API's healthcheck succeeds, so a fresh
+deployment has a complete service-secret file before Event reads it.
 `make verify` checks all three health endpoints; `make test` runs Go tests separately.
-`docker compose down` preserves the database and secret;
-`docker compose down --volumes` deletes both and invalidates existing tokens.
+`docker compose down` preserves the database and both secrets;
+`docker compose down --volumes` deletes them and invalidates existing tokens.
 
 **Why:** This supports a repeatable local environment and keeps credentials and
 the database outside services that do not need them.
@@ -134,17 +142,50 @@ deployment secret management before that scope changes. See [Compose](../compose
 
 ## DD-008 — Scoped inter-service authorization
 
-**Status:** Deferred mechanism; required behavior accepted, not implemented yet.
+**Status:** Accepted and implemented for API → Event submission and owner listing.
+Detection and job-scoped authority remain deferred.
 
-**Decision:** Select the mechanism when implementing service calls. It must bind
-authority to the receiving service, owner or resource, action, validity period,
-and job where relevant. Event must authorize every read and write independently.
+**Decision:** Reuse the shared authentication package with a separate HS256
+secret for API-to-Event delegation. API derives the owner from its verified user
+identity and signs a new token for each internal request. The token has issuer
+`mini-siem-api`, audience `mini-siem-event`, the owner's positive ID in `sub`,
+action `events:add` or `events:list`, and an expiry 30 seconds after issuance.
+API never forwards the user's JWT to Event.
+
+Event independently pins HS256 and checks the signature, issuer, audience,
+expiration, positive owner ID, and action required by its route. It uses the
+verified subject as the sole owner for storage calls. Request JSON accepts only
+`type` and `source_ip`; unknown fields, including ownership, are rejected. The
+list operation accepts no caller-selected owner. Missing, forged, expired, or
+insufficient authority fails before any store access. Neither service exposes
+an admin event list yet.
+
+API generates the separate service secret with the existing random-secret file
+handling, using file mode `0600`, and rejects configurations that reuse its user
+JWT secret. Compose stores it at `/run/event-auth/secret` in the dedicated volume
+from DD-007. Event reads that file without permission to write it; unreadable or
+invalid secrets stop startup. Neither Event nor Detection can read API's user
+JWT secret or users database. Local runs default to `.secrets/event-secret`;
+`EVENT_SECRET_FILE` overrides the path in each service.
 
 **Why:** A service's network access does not grant permission to another user's
 records. Detection needs authority only for the delegated owner and job.
 
-**Tradeoff / revisit:** This remains required work before the event and detection
-workflow is complete. User JWTs are accepted only at API; DD-001 does not authorize
-sharing its HMAC secret with internal services. Verify direct-service,
-cross-user, and cross-job denials when selecting the mechanism. See
+**Tradeoff / revisit:** Either holder of the service HMAC secret can mint Event
+authority; compromising Event therefore compromises its authorization boundary.
+The separate secret prevents that compromise from minting public user JWTs.
+Delegation tokens are bearer credentials and can be replayed for the same owner
+and action until expiry; they are not bound to one request body and there is no
+replay cache. HTTP on the local internal network provides no transport
+confidentiality. Use TLS, stronger key isolation, and replay protection before
+expanding beyond the assignment's local synthetic-data scope. Replacing the
+service secret requires restarting both services; it invalidates outstanding
+delegations, and restarting Event discards events.
+
+API uses a bounded upstream timeout, returns HTTP 502 for backend failures and
+HTTP 504 for timeouts, and does not retry event submissions: a timed-out request
+may already have stored its event. Storage remains unbounded in memory and list
+responses have no pagination; revisit retention and pagination before sustained
+loads. Detection will need separate owner/action/job authority rather than this
+API-only secret. See
 [NFR-03 and the access model](initial-plan.md#non-functional-requirements).

@@ -144,3 +144,81 @@ func TestRunUsesConfiguredSigningSecret(t *testing.T) {
 		t.Fatal("startup did not load the configured signing secret before opening the users database")
 	}
 }
+
+func TestRunCreatesSeparateEventSecret(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("JWT_SECRET_FILE", "")
+	t.Setenv("EVENT_SECRET_FILE", "")
+	t.Setenv("EVENT_URL", "")
+	t.Setenv("USERS_DB_PATH", filepath.Join(dir, "missing", "users.db"))
+	if err := run(); err == nil || !strings.Contains(err.Error(), "users") {
+		t.Fatalf("startup did not initialize secrets before storage: %v", err)
+	}
+	userSecret, err := os.ReadFile(filepath.Join(".secrets", "jwt-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventPath := filepath.Join(".secrets", "event-secret")
+	eventSecret, err := os.ReadFile(eventPath)
+	if err != nil || bytes.Equal(userSecret, eventSecret) {
+		t.Fatal("service and user secrets must be independently generated")
+	}
+	decoded, err := hex.DecodeString(string(eventSecret))
+	if err != nil || len(decoded) != 32 {
+		t.Fatal("Event secret must encode 32 random bytes")
+	}
+	info, err := os.Stat(eventPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("Event secret must have mode 0600")
+	}
+	if err := os.Chmod(eventPath, 0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(); err == nil || !strings.Contains(err.Error(), "users") {
+		t.Fatalf("startup did not reuse Event secret: %v", err)
+	}
+	reused, err := os.ReadFile(eventPath)
+	if err != nil || !bytes.Equal(eventSecret, reused) {
+		t.Fatal("startup replaced Event secret")
+	}
+}
+
+func TestRunRejectsInvalidEventConfiguration(t *testing.T) {
+	for _, tt := range []struct {
+		name, secret, eventURL string
+	}{
+		{"weak secret", "short", "http://event:8080"},
+		{"same secret", strings.Repeat("u", 32), "http://event:8080"},
+		{"invalid URL", strings.Repeat("e", 32), "://bad"},
+		{"URL credentials", strings.Repeat("e", 32), "http://user:password@event:8080"},
+		{"URL query", strings.Repeat("e", 32), "http://event:8080?owner_id=1"},
+		{"URL path", strings.Repeat("e", 32), "http://event:8080/other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			userPath, eventPath := filepath.Join(dir, "user-secret"), filepath.Join(dir, "event-secret")
+			if err := os.WriteFile(userPath, []byte(strings.Repeat("u", 32)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(eventPath, []byte(tt.secret), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("JWT_SECRET_FILE", userPath)
+			t.Setenv("EVENT_SECRET_FILE", eventPath)
+			t.Setenv("EVENT_URL", tt.eventURL)
+			dbPath := filepath.Join(dir, "users.db")
+			t.Setenv("USERS_DB_PATH", dbPath)
+			if err := run(); err == nil {
+				t.Fatal("startup accepted invalid Event configuration")
+			}
+			if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+				t.Fatal("opened database before validating service configuration")
+			}
+			unchanged, err := os.ReadFile(eventPath)
+			if err != nil || string(unchanged) != tt.secret {
+				t.Fatal("startup replaced invalid Event secret")
+			}
+		})
+	}
+}

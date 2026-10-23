@@ -1,0 +1,115 @@
+{
+  "info": {
+    "name": "Mini-SIEM",
+    "description": "Public API requests from docs/curl.md. Import this collection and mini-siem.postman_environment.json together. In Apidog, choose Keep full URLs (disable Remove base URLs), then select the local environment. The api_host variable contains hostname:port only; each request has a literal http:// prefix so Apidog does not prepend a module base URL. Start services with make up. Run the API folder in order: logins save per-user tokens for later requests. Only synthetic demo data and seeded credentials are included. Events remain in memory until Event restarts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "API — run in order",
+      "item": [
+        {
+          "name": "Health — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/health" },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('API is healthy', function () { pm.response.to.have.status(200); pm.expect(pm.response.text().trim()).to.equal('ok'); });"] } }]
+        },
+        {
+          "name": "Login Alice — save token",
+          "request": {
+            "method": "POST",
+            "url": "http://{{api_host}}/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"Alice\",\n  \"password\": \"alice-password\"\n}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.environment.set('alice_token', '');", "pm.test('Alice login succeeds', function () {", "  pm.response.to.have.status(200);", "  const token = pm.response.json().access_token;", "  pm.expect(token).to.be.a('string').and.not.empty;", "  pm.environment.set('alice_token', token);", "});"] } }]
+        },
+        {
+          "name": "Login Bob — save token",
+          "request": {
+            "method": "POST",
+            "url": "http://{{api_host}}/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"Bob\",\n  \"password\": \"bob-password\"\n}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.environment.set('bob_token', '');", "pm.test('Bob login succeeds', function () {", "  pm.response.to.have.status(200);", "  const token = pm.response.json().access_token;", "  pm.expect(token).to.be.a('string').and.not.empty;", "  pm.environment.set('bob_token', token);", "});"] } }]
+        },
+        {
+          "name": "Login Admin — save token",
+          "request": {
+            "method": "POST",
+            "url": "http://{{api_host}}/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"Admin\",\n  \"password\": \"admin-password\"\n}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.environment.set('admin_token', '');", "pm.test('Admin login succeeds', function () {", "  pm.response.to.have.status(200);", "  const token = pm.response.json().access_token;", "  pm.expect(token).to.be.a('string').and.not.empty;", "  pm.environment.set('admin_token', token);", "});"] } }]
+        },
+        {
+          "name": "Alice identity — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/me", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Alice identity is returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().role).to.equal('user'); });"] } }]
+        },
+        {
+          "name": "Identity without token — 401",
+          "request": { "method": "GET", "url": "http://{{api_host}}/me", "auth": { "type": "noauth" } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Authentication is required', function () { pm.response.to.have.status(401); });"] } }]
+        },
+        {
+          "name": "Alice submits login.failed — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"login.failed\",\n  \"source_ip\": \"192.0.2.1\"\n}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Event is ingested', function () { pm.response.to.have.status(201); const event = pm.response.json(); pm.expect(event.type).to.equal('login.failed'); pm.expect(event.id).to.be.a('string').and.not.empty; pm.expect(event.ingested_at).to.be.a('string').and.not.empty; });"] } }]
+        },
+        {
+          "name": "Invalid source IP — 400",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"login.failed\",\n  \"source_ip\": \"999.999.999.999\"\n}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Invalid source IP is rejected', function () { pm.response.to.have.status(400); });"] } }]
+        },
+        {
+          "name": "Client-supplied ownership — 400",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"login.failed\",\n  \"source_ip\": \"192.0.2.1\",\n  \"owner_id\": 2\n}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Client ownership is rejected', function () { pm.response.to.have.status(400); });"] } }]
+        },
+        {
+          "name": "Alice lists her events — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/events", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Alice receives an event array', function () { pm.response.to.have.status(200); pm.expect(pm.response.json()).to.be.an('array'); });"] } }]
+        },
+        {
+          "name": "Bob lists his events — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/events", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Bob receives an event array', function () { pm.response.to.have.status(200); pm.expect(pm.response.json()).to.be.an('array'); });"] } }]
+        },
+        {
+          "name": "Bob supplies owner query — 400",
+          "request": {
+            "method": "GET",
+            "description": "Intentionally sends the unsupported owner_id query parameter. Ensure owner_id=1 is enabled in Params; without it this becomes the ordinary list request and returns 200.",
+            "url": {
+              "raw": "http://{{api_host}}/events?owner_id=1",
+              "protocol": "http",
+              "host": ["{{api_host}}"],
+              "path": ["events"],
+              "query": [{ "key": "owner_id", "value": "1", "disabled": false }]
+            },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Owner query is rejected', function () { pm.response.to.have.status(400); });"] } }]
+        }
+      ]
+    }
+  ]
+}
