@@ -142,3 +142,63 @@ func TestLookupReportsStorageFailure(t *testing.T) {
 		t.Fatalf("got %v, want a storage error", err)
 	}
 }
+
+func TestAuthenticate(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "users.db"))
+	for _, tt := range []struct{ username, password, role string }{
+		{"Alice", "alice-password", "user"},
+		{"Bob", "bob-password", "user"},
+		{"Admin", "admin-password", "admin"},
+	} {
+		t.Run(tt.username, func(t *testing.T) {
+			user, err := store.Authenticate(context.Background(), tt.username, tt.password)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if user.ID <= 0 || user.Username != tt.username || user.Role != tt.role {
+				t.Fatalf("unexpected identity: %+v", user)
+			}
+		})
+	}
+}
+
+func TestAuthenticateRejectsInvalidCredentials(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "users.db"))
+	for _, tt := range []struct{ username, password string }{
+		{"Alice", "wrong-password"},
+		{"Alice", "bob-password"},
+		{"Alice", ""},
+		{"unknown", "alice-password"},
+		{"", ""},
+		{"' OR 1=1 --", "alice-password"},
+		{"Alice' --", "alice-password"},
+	} {
+		t.Run(tt.username+"/"+tt.password, func(t *testing.T) {
+			user, err := store.Authenticate(context.Background(), tt.username, tt.password)
+			if err != ErrAuthentication || user != (User{}) {
+				t.Fatalf("got user=%+v error=%v, want no identity and ErrAuthentication", user, err)
+			}
+		})
+	}
+}
+
+func TestAuthenticatePreservesDatabaseErrors(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "users.db"))
+	t.Run("canceled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		user, err := store.Authenticate(ctx, "Alice", "alice-password")
+		if !errors.Is(err, context.Canceled) || errors.Is(err, ErrAuthentication) || user != (User{}) {
+			t.Fatalf("got user=%+v error=%v, want no identity and context.Canceled", user, err)
+		}
+	})
+	t.Run("closed database", func(t *testing.T) {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		user, err := store.Authenticate(context.Background(), "Alice", "alice-password")
+		if err == nil || errors.Is(err, ErrAuthentication) || errors.Is(err, sql.ErrNoRows) || user != (User{}) {
+			t.Fatalf("got user=%+v error=%v, want no identity and a storage error", user, err)
+		}
+	})
+}

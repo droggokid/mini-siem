@@ -27,6 +27,7 @@ go.work.sum
 
 # env file
 .env
+/.secrets/
 
 # Local API users database
 /users.db*

@@ -1,4 +1,6 @@
 .git
+.secrets
+.env
 **/.idea
 **/.vscode
 **/*.swp
