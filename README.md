@@ -11,6 +11,67 @@ The services will run locally with Docker Compose. The users database will persi
 - [Initial SSDLC plan](docs/initial-plan.md), including requirements, architecture, access control, threat model, and lifecycle gates
 - [Component diagram](docs/diagrams/components.mmd), [data flow](docs/diagrams/data-flow.mmd), and [detection sequence](docs/diagrams/detection-sequence.mmd)
 
-## Status
+## Local development
 
-The plan describes the intended system. The services, tests, Jenkins pipeline, final report, AI-use declaration, and exact build and run commands are still to be added. Use only synthetic data and local seeded accounts.
+Requirements: Go 1.27.3, Docker with Docker Compose, and curl.
+
+API, Event, and Detection are separate executables. Each exposes
+`GET /health`, returning HTTP 200 with the body `ok`.
+
+Only API publishes a host port, at `127.0.0.1:8080`.
+Event and Detection are accessible through the internal Docker network.
+
+### Build
+
+From the repository root:
+
+```sh
+go build ./...
+```
+
+To build individual executable files:
+
+```sh
+go build -o bin/api ./cmd/api
+go build -o bin/event ./cmd/event
+go build -o bin/detection ./cmd/detection
+```
+
+### Run
+
+```sh
+docker compose up --build
+```
+
+Leave this running and open another terminal for verification.
+
+### Verify
+
+Check API from the host:
+
+```sh
+curl --fail --silent --show-error http://127.0.0.1:8080/health
+```
+
+Check Event and Detection from API's container over the backend network:
+
+```sh
+docker compose exec -T api wget -qO- http://event:8080/health
+docker compose exec -T api wget -qO- http://detection:8080/health
+```
+
+Each command should print `ok` and exit successfully.
+
+Inspect service status and published ports:
+
+```sh
+docker compose ps
+```
+
+Only API should show a published host port.
+
+### Stop
+
+```sh
+docker compose down
+```
