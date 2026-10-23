@@ -273,7 +273,7 @@ supply-chain experiment remains deferred.
 
 **Verification:** Independent rule tests, service and security tests, and a
 clean build using the published version without the local module directory.
-See [installation, build and release commands](../README.md#eventkit-dependency).
+See [dependency version and build guidance](../README.md#eventkit-dependency).
 
 ## DD-011 — Separate admin event listing and privileged delegation
 
@@ -316,3 +316,35 @@ unbounded in-memory storage and unpaginated-list limitations from DD-008 apply.
 targeted authority, user/job-token rejection and action isolation. The existing
 real-service integration test checks all three owners, Admin's ordinary scope,
 the privileged listing and unchanged event/alert snapshots after rejected calls.
+
+## DD-012 — GitHub Actions CI and security gates
+
+**Status:** Accepted; GitHub execution evidence must be collected after pushing.
+
+**Decision:** Use one GitHub Actions workflow with three required Ubuntu jobs:
+build/quality/tests, Trivy dependency security, and real Compose integration.
+Read Go from `go.mod`, pin CI tools, retain the existing dependencies and tests,
+and verify published `eventkit v0.1.0` independently of the local module. Disable
+workspaces and mutable module resolution. Block on dependency/build/format/vet
+errors, test/race failures, HIGH/CRITICAL dependency findings, scanner errors,
+unhealthy services, integration failure or failed cleanup. Keep read-only
+workflow permissions and upload only inventories, sanitized JUnit, vulnerability
+JSON and restricted diagnostics. Require all three checks through branch protection.
+
+**Why:** The repository is hosted on GitHub and needs no separate Jenkins host.
+This implements the original SSDLC plan's gates using GitHub Actions rather than
+its proposed Jenkins runner; the original plan remains unchanged. Existing Go
+commands, Dockerfiles, Compose and `TestDetectionIntegration` provide the checks
+without a CI framework, additional application dependencies or deployment setup.
+
+**Tradeoff / revisit:** Scanner databases and hosted runner images evolve;
+network or registry outages fail closed. Dependency analysis does not cover
+container OS packages or prove absence of application vulnerabilities. Exceptions
+need explicit review and expiry; none are enabled. JUnit omits arbitrary output
+to avoid publishing tokens. Artifacts expire after 14 days. Forced runner loss
+can interrupt cleanup; CI uses disposable hosted runners. Passing CI only blocks
+merges after branch protection is configured. GitHub pass/fail/pass evidence needs
+three actual runs and is not established by local verification.
+
+**Verification:** See [CI commands, artifacts and the authorization-gate
+experiment](ci.md). No application functionality or security behavior changes.
