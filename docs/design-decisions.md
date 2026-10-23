@@ -89,8 +89,8 @@ formats aligned as endpoints change. See [curl examples](curl.md), the
 The separate admin event operation remains planned.
 
 **Decision:** Keep API, Event, and Detection as separate Go executables using
-HTTP/JSON. Detection currently implements its rule locally; `eventkit` extraction
-is deferred (DD-009).
+HTTP/JSON. Detection uses the independently versioned `eventkit` module
+(DD-010).
 
 **Why:** The assignment needs a detection workflow that crosses service trust
 boundaries and exercises a declared dependency. This makes those boundaries and
@@ -195,8 +195,8 @@ loads. Detection uses separate owner/action/job authority (DD-009). See
 
 ## DD-009 — Local synchronous detection and signed job permissions
 
-**Status:** Accepted and implemented for FR-04 and FR-05. Defers the initial
-plan's `eventkit` dependency until a later extraction; the initial plan is retained.
+**Status:** Accepted and implemented for FR-04 and FR-05. The initially deferred
+`eventkit` dependency is now implemented in DD-010; the initial plan is retained.
 
 **Decision:** `POST /detections/run` runs synchronously for the authenticated
 JWT owner. API creates a random job ID and three separate 30-second tokens:
@@ -220,7 +220,7 @@ are `.secrets/job-seed` and `.secrets/job-public`; `JOB_SEED_FILE` (API only) an
 `JOB_PUBLIC_KEY_FILE` override them. Existing keys are reused; malformed,
 unreadable or mismatched files stop startup without replacement.
 
-The pure local rule groups `login.failed` ingestion timestamps by canonical IP,
+The pure rule in `eventkit` groups `login.failed` ingestion timestamps by canonical IP,
 sorts each group, and counts an inclusive rolling five-minute window. It emits
 one finding per qualifying IP with the largest window count. Event validates
 the whole batch before storing alerts and assigns IDs and creation timestamps.
@@ -229,8 +229,8 @@ only that owner's alerts.
 
 **Why:** This meets the three-service workflow without new dependencies,
 workers, queues or persistence. Public-key verification lets Detection check
-permissions without gaining signing authority. The pure rule can later move
-into `eventkit`.
+permissions without gaining signing authority. DD-010 extracts the pure rule
+into `eventkit` without changing the workflow.
 
 **Tradeoff / revisit:** New runs may create fresh alerts from historical events.
 There is no replay cache; permissions remain usable for the same owner/action/job
@@ -245,3 +245,31 @@ the seed and matching public key and restarting all services.
 tests cover the boundaries above. `integration_test.go` runs real API, Detection
 and Event processes with temporary keys/database. `MINI_SIEM_TEST_URL` runs the
 same acceptance workflow against a fresh Compose stack.
+
+## DD-010 — Independently versioned eventkit module
+
+**Status:** Accepted and implemented.
+
+**Decision:** Publish `github.com/droggokid/mini-siem/eventkit` from the
+`eventkit/` subdirectory with its own `go.mod`. Version `v0.1.0` uses the tag
+`eventkit/v0.1.0`. Detection imports the pinned module; the root `go.sum`
+authenticates its archive and manifest. No workspace or permanent `replace`
+directive participates in service builds.
+
+The existing algorithm and focused tests move into the module. Its API is
+`Detect([]Event) []Finding`, with only type, source IP and ingestion timestamp
+as input. It uses the standard library only. Detection retains owner/job and
+upstream validation before passing data to the rule. No HTTP, authentication,
+storage or application packages enter the module.
+
+**Why:** This fulfills the initial plan's independently installed library
+requirement without changing service architecture or detection behavior.
+
+**Tradeoff / revisit:** A nested module needs its own test command and prefixed
+release tags; `make test` covers both modules. Installed versions execute with
+Detection's privileges and must be reviewed before release. The optional
+supply-chain experiment remains deferred.
+
+**Verification:** Independent rule tests, service and security tests, and a
+clean build using the published version without the local module directory.
+See [installation, build and release commands](../README.md#eventkit-dependency).

@@ -2,7 +2,7 @@
 
 Mini-SIEM is a small security event monitor for Assignment I. Alice, Bob, and Admin submit events and inspect their own events and alerts. A detection run checks the caller's events for at least five failed logins from the same IP within five minutes and saves alerts. The separate admin-wide event operation remains planned.
 
-The system has three separate Go services: API authenticates users, Event stores events and alerts, and Detection applies a local, independently tested Go rule. Extraction into `eventkit` is deferred. Users log in with seeded accounts stored in SQLite and receive short-lived JWTs. API alone accesses the users database and establishes scoped authority for inter-service calls. The detection run calls all three services.
+The system has three separate Go services: API authenticates users, Event stores events and alerts, and Detection applies the independently versioned `eventkit` Go module. Users log in with seeded accounts stored in SQLite and receive short-lived JWTs. API alone accesses the users database and establishes scoped authority for inter-service calls. The detection run calls all three services.
 
 The services run locally with Docker Compose. The users database persists in an API-only volume. Events and alerts stay in memory and are lost when Event restarts. HTTP endpoints, automated tests, and curl examples provide the interface.
 
@@ -42,6 +42,67 @@ go build -o bin/api ./cmd/api
 go build -o bin/event ./cmd/event
 go build -o bin/detection ./cmd/detection
 ```
+
+### eventkit dependency
+
+Detection imports `github.com/droggokid/mini-siem/eventkit` at `v0.1.0`,
+published from [`eventkit/`](eventkit/) with its own `go.mod` and repository
+tag `eventkit/v0.1.0`. The root `go.mod` declares the dependency explicitly;
+`go.sum` records both the module and its `go.mod` checksums. There is no
+workspace or `replace` directive. Docker builds download the same version
+without copying the local `eventkit/` directory.
+
+Install this library from any Go module, including this repository's root:
+
+```sh
+GOWORK=off go get github.com/droggokid/mini-siem/eventkit@v0.1.0
+```
+
+From a clean checkout, resolve dependencies into empty caches and build/test
+using the declared version (Go 1.27.3):
+
+```sh
+export GOWORK=off
+export GOMODCACHE="$(mktemp -d)"
+export GOCACHE="$(mktemp -d)"
+go mod download
+go mod verify
+go list -m -json github.com/droggokid/mini-siem/eventkit
+go build -mod=readonly ./...
+go test -mod=readonly -count=1 ./...
+```
+
+The module listing must report `v0.1.0`, a directory in `GOMODCACHE`, and no
+`Replace` field. The tests include the real three-service detection workflow
+and authorization checks. Test the independent module separately:
+
+```sh
+cd eventkit
+GOWORK=off go test -count=1 ./...
+GOWORK=off go test -race ./...
+GOWORK=off go vet ./...
+```
+
+The rule has only standard-library imports and no external dependencies, so
+`eventkit/go.sum` is unnecessary. `make test` runs both modules' tests.
+Detection validates owner/job authority and upstream data before passing only
+the rule's event fields to `eventkit.Detect`; HTTP, keys and storage stay in
+the services. See [the module API and behavior](eventkit/README.md).
+
+For a future release, test and review the module, commit its changes, then
+create a new subdirectory-prefixed tag and install that exact version at the
+repository root. For example, the initial release uses:
+
+```sh
+git tag -a eventkit/v0.1.0 -m 'eventkit v0.1.0'
+git push origin refs/tags/eventkit/v0.1.0
+GOWORK=off go get github.com/droggokid/mini-siem/eventkit@v0.1.0
+GOWORK=off make test
+```
+
+The initial tag already exists; use a new version for subsequent releases.
+Commit the resulting root `go.mod` and `go.sum`. Never overwrite released
+tags or bypass checksum verification.
 
 ### Run
 

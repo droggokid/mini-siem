@@ -16,6 +16,7 @@ ps:
 	docker compose ps
 
 test:
+	cd eventkit && go test ./...
 	go test ./...
 
 verify:
