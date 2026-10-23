@@ -1,0 +1,10 @@
+FROM golang:1.27.3-alpine3.24 AS build
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/detection ./cmd/detection
+RUN CGO_ENABLED=0 go build -trimpath -o /service ./cmd/detection
+
+FROM alpine:3.24.3
+COPY --from=build /service /service
+USER 65532:65532
+ENTRYPOINT ["/service"]

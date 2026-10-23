@@ -1,0 +1,29 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: cmd/api/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - default
+      - backend
+
+  event:
+    build:
+      context: .
+      dockerfile: cmd/event/Dockerfile
+    networks:
+      - backend
+
+  detection:
+    build:
+      context: .
+      dockerfile: cmd/detection/Dockerfile
+    networks:
+      - backend
+
+networks:
+  default: {}
+  backend:
+    internal: true
