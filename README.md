@@ -45,7 +45,37 @@ docker compose up --build
 
 Leave this running and open another terminal for verification.
 
+API initializes SQLite on startup with these local demo accounts:
+
+| Username | Password | Role |
+|---|---|---|
+| Alice | alice-password | user |
+| Bob | bob-password | user |
+| Admin | admin-password | admin |
+
+These fixed credentials are only for the local assignment. SQLite stores bcrypt
+hashes, and initialization preserves existing accounts and hashes.
+Usernames are case-sensitive. Login endpoints are not implemented yet.
+
+Compose mounts `users-data` at `/data` only in API. Event and Detection have no
+database mount. The volume survives container recreation and `docker compose down`;
+`docker compose down --volumes` deletes it.
+
+For a local API run, use `go run ./cmd/api`. The database defaults to `users.db`
+in the working directory. Set `USERS_DB_PATH` to override it; its parent directory
+must exist and be writable.
+
+The schema is in [`cmd/api/internal/users/schema.sql`](cmd/api/internal/users/schema.sql)
+and embedded in the API binary. API applies it and seeds missing accounts on startup.
+The generated `users.db` is ignored by Git and excluded from Docker build contexts.
+
 ### Verify
+
+Run the Go tests:
+
+```sh
+go test ./...
+```
 
 Check API from the host:
 
