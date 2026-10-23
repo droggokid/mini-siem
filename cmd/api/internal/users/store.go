@@ -37,6 +37,7 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("open users database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	// Bind values as $n parameters; table and column names stay fixed in source.
 	store := &Store{
 		db:   db,
 		psql: sq.StatementBuilder.PlaceholderFormat(sq.Dollar).RunWith(db),
@@ -60,6 +61,7 @@ func (s *Store) initialize() error {
 	defer tx.Rollback()
 	psql := s.psql.RunWith(tx)
 
+	// This raw SQL is an embedded source file, never request-supplied text.
 	if _, err = tx.Exec(schema); err != nil {
 		return fmt.Errorf("create users table: %w", err)
 	}
@@ -74,6 +76,7 @@ func (s *Store) initialize() error {
 		if err != nil {
 			return fmt.Errorf("hash seed password: %w", err)
 		}
+		// Values binds seed data separately from the fixed INSERT and conflict clause.
 		if _, err = psql.Insert("users").
 			Columns("username", "password_hash", "role").
 			Values(seed.username, hash, seed.role).
@@ -90,6 +93,7 @@ func (s *Store) initialize() error {
 // LookupByUsername returns sql.ErrNoRows when the username does not exist.
 func (s *Store) LookupByUsername(ctx context.Context, username string) (User, error) {
 	var row userRow
+	// Bind username as data so SQL punctuation cannot change the WHERE clause.
 	err := s.psql.Select("id", "username", "password_hash", "role").
 		From("users").
 		Where(sq.Eq{"username": username}).
@@ -104,6 +108,7 @@ func (s *Store) LookupByUsername(ctx context.Context, username string) (User, er
 // Authenticate verifies credentials and returns the user's identity.
 func (s *Store) Authenticate(ctx context.Context, username, password string) (User, error) {
 	var row userRow
+	// Bind username; never concatenate credentials into the SQL text.
 	err := s.psql.Select("id", "username", "password_hash", "role").
 		From("users").
 		Where(sq.Eq{"username": username}).
@@ -115,6 +120,7 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (Us
 	if err != nil {
 		return User{}, fmt.Errorf("authenticate user: %w", err)
 	}
+	// Verify passwords outside SQL; hashing is separate from injection prevention.
 	if err = bcrypt.CompareHashAndPassword(row.PasswordHash, []byte(password)); err != nil {
 		return User{}, ErrAuthentication
 	}

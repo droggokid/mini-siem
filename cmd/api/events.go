@@ -26,10 +26,12 @@ func eventHandler(eventURL string, tokens *auth.Tokens) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
+		// Reject unsupported selectors rather than letting callers choose downstream scope.
 		if c.Request.URL.RawQuery != "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameters are not supported"})
 			return
 		}
+		// Bound proxy buffering; Event separately validates the event's fields before storage.
 		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 64*1024))
 		if err != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
@@ -51,11 +53,13 @@ func eventHandler(eventURL string, tokens *auth.Tokens) gin.HandlerFunc {
 				action = auth.ListAlerts
 				path = "/alerts"
 			}
+			// GET has no body parameters in this API.
 			if len(body) != 0 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "GET must not have a body"})
 				return
 			}
 		}
+		// Delegate only this operation for the authenticated principal, never a caller-selected owner.
 		token, err := tokens.SignEvent(identity.ID, action)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})

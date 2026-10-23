@@ -20,6 +20,7 @@ type eventClaims struct {
 }
 
 // SignEvent uses a dedicated API-to-Event Tokens instance, never the user-JWT key.
+// API must authorize the caller before requesting privileged actions.
 func (t *Tokens) SignEvent(ownerID int64, action string) (string, error) {
 	if ownerID <= 0 || (action != AddEvent && action != ListEvents && action != ListAllEvents && action != ListAlerts) {
 		return "", errors.New("invalid Event authority scope")
@@ -34,6 +35,7 @@ func (t *Tokens) SignEvent(ownerID int64, action string) (string, error) {
 	}).SignedString(t.secret)
 }
 
+// ValidateEvent verifies delegated authority, not the user's eligibility for that authority.
 func (t *Tokens) ValidateEvent(raw, action string) (int64, error) {
 	var c eventClaims
 	_, err := jwt.ParseWithClaims(raw, &c, func(*jwt.Token) (any, error) {

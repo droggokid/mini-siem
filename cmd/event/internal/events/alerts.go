@@ -17,10 +17,12 @@ func (s *Store) AddAlerts(ownerID int64, inputs []AlertInput) ([]Alert, error) {
 	var alerts []Alert
 	for _, input := range inputs {
 		ip, err := netip.ParseAddr(input.SourceIP)
+		// A signed job can still submit malformed findings; validate every item.
 		if err != nil || input.DetectionType != "failed_login_burst" || input.FailedLoginCount < 5 {
 			return nil, errors.New("invalid alert")
 		}
 
+		// Normalize equivalent addresses before checking for duplicate findings.
 		ip = ip.Unmap()
 		if seen[ip] {
 			return nil, errors.New("duplicate source IP in detection run")
@@ -36,12 +38,14 @@ func (s *Store) AddAlerts(ownerID int64, inputs []AlertInput) ([]Alert, error) {
 		})
 	}
 
+	// Commit only after every item passes, so an invalid batch cannot leave partial writes.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.alerts = append(s.alerts, alerts...)
 	return alerts, nil
 }
 
+// ListAlerts filters by the trusted owner; callers must verify authority first.
 func (s *Store) ListAlerts(ownerID int64) []Alert {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

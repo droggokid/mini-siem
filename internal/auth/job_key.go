@@ -14,6 +14,7 @@ func ReadJobPublicKey(path string) (ed25519.PublicKey, error) {
 		return nil, errors.New("cannot read job public key")
 	}
 
+	// Reject malformed key-file contents before using them to verify delegated authority.
 	public, err := hex.DecodeString(string(bytes.TrimSpace(encoded)))
 	if err != nil || len(public) != ed25519.PublicKeySize {
 		return nil, errors.New("invalid job public key")

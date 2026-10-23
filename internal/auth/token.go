@@ -42,6 +42,7 @@ func (t *Tokens) Sign(user Identity) (string, error) {
 	}).SignedString(t.secret)
 }
 
+// Validate authenticates signed identity and role; it does not grant access to every endpoint.
 func (t *Tokens) Validate(raw string) (Identity, error) {
 	var c claims
 	_, err := jwt.ParseWithClaims(raw, &c, func(*jwt.Token) (any, error) {

@@ -47,6 +47,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("cannot load Event authorization secret file: %w", err)
 	}
+	// Reject configuration that collapses user-token and Event-authority trust domains.
 	if bytes.Equal(bytes.TrimSpace(secret), bytes.TrimSpace(eventSecret)) {
 		return errors.New("Event authorization secret must differ from the user JWT secret")
 	}
@@ -58,6 +59,7 @@ func run() error {
 	if eventURL == "" {
 		eventURL = "http://event:8080"
 	}
+	// Require a service base URL; do not let configuration inject credentials or request selectors.
 	endpoint, err := url.Parse(eventURL)
 	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
 		endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {

@@ -25,7 +25,7 @@ The system will have three Go services, two main resources (events and alerts), 
 | NFR-02 | Ordinary operations are limited to the caller's records; only the admin event list may cross owners. | Cross-user access fails; Admin cannot read others' alerts or run detection on their events. |
 | NFR-03 | Event and Detection enforce inter-service authorization scoped to the receiving service, owner or resource, action, validity period, and job where relevant. | User JWTs at internal services, unauthorized direct-service calls, and missing, expired, or mismatched authority fail. |
 | NFR-04 | Reject malformed input, including invalid source IP addresses, and limit JSON request bodies to 64 KiB. | Invalid or oversized input is rejected without storing records; valid source IPs and boundary-sized requests succeed. |
-| NFR-05 | Functional and security checks run automatically. | Test valid workflows, forbidden operations, and the fixes for all four planted flaws. |
+| NFR-05 | Functional and security checks run automatically. | Test valid workflows, forbidden operations, and protections against the four analyzed weaknesses. |
 | NFR-06 | Three separate services run locally through Docker Compose and communicate over HTTP/JSON. Only API mounts the users database volume. | Start a fresh environment with a newly seeded database, complete detection, and check database access is limited to API. |
 | NFR-07 | Builds are reproducible and use approved, declared dependencies. | Build in a clean environment using the pinned toolchain, dependency versions, and artifact checks. |
 | NFR-08 | Jenkins runs on every push and pull request, saves results, and fails when a release gate fails. | Check both triggers, archived results, and a deliberately failing gate. |
@@ -107,20 +107,20 @@ Jenkins will run on every push and pull request. It will build the services, run
 
 The pipeline will fail on build or analysis errors, undeclared or unapproved dependencies, malformed artifacts, failed functional or security tests, and confirmed high or critical dependency vulnerabilities. Any confirmed violation of the required security guarantees will also block release, regardless of severity. Confirmed violations must be fixed before release.
 
-## Planned vulnerability evidence
+## Security analyses
 
-The three selected course-catalog vulnerabilities are CWE-20, CWE-89, and CWE-862. The fourth experiment targets cross-service composition.
+The three selected course-catalog weaknesses are CWE-20, CWE-89, and CWE-862. The fourth analysis covers cross-service composition. The writeups explain the implemented controls and use illustrative examples to show how each weakness could arise.
 
-| Experiment | Vulnerable behavior and observable exploit | Fix and regression evidence |
+| Analysis | Security concern | Implemented protection |
 |---|---|---|
-| V1 — CWE-862: Missing Authorization | Bob calls the restricted admin event-list operation. API omits its role check and delegates admin event-list authority, exposing Alice's events through the normal API path. | API requires the privileged role before delegating that authority; Event requires the specific admin event-list action. Bob is denied and Admin succeeds. |
-| V2 — CWE-89: SQL Injection | API concatenates a login username into its SQLite lookup. A crafted username changes the query to return a privileged identity with a valid password hash chosen by the attacker. Password verification still runs, but the attacker receives privileged authority. | Use parameterized queries. The exploit cannot replace the returned identity or obtain a privileged JWT; ordinary seeded-account login still works. |
-| V3 — CWE-20: Improper Input Validation | Event accepts an event submitted through API with source IP `999.999.999.999`, storing invalid data for detection. | Validate source IP addresses before storage. Reject the invalid address without a write; a valid source IP is accepted. |
-| V4 — cross-service confused deputy | Bob's authenticated analysis request supplies Alice's owner ID. In the vulnerable variant, Detection forwards that target and Event trusts Detection's service authority instead of enforcing the delegated owner. Bob receives an alert derived from Alice's events, although direct requests for Alice's events remain denied. | Derive ownership from verified delegated authority and reject caller-selected ownership. Detection checks the owner and job scope, and Event enforces that owner on every read and write. Bob's request cannot produce Alice-derived results; his legitimate job still works. |
+| [V1: Missing Authorization](vulnerabilities/V1-missing-authorization.md) | An ordinary user gaining cross-owner access through a privileged operation. | API checks the admin role before delegation; Event independently validates the exact privileged action. |
+| [V2: SQL Injection](vulnerabilities/V2-sql-injection.md) | Untrusted login input changing SQL query structure or the returned identity. | Parameterized queries keep values separate from SQL syntax; bcrypt verifies the retrieved account's password. |
+| [V3: Improper Input Validation](vulnerabilities/V3-improper-input-validation.md) | Malformed requests or invalid event data reaching storage and detection. | Validate request size, structure and semantic values before processing or storing them. |
+| [V4: Cross-service confused deputy](vulnerabilities/V4-cross-service-confused-deputy.md) | A permitted analysis operation accessing another user's events through a downstream service. | Preserve the authenticated owner and job in signed permissions; Detection checks consistency and Event enforces scope on every read and write. |
 
-V1 removes the ordinary user's role check on a privileged operation. V4 keeps ordinary API authorization intact and exposes a mismatch between a processing request and the authority enforced by another service. V4 uses a valid Bob identity, not a forged JWT. Each experiment starts from the secure baseline and changes only the behavior needed to expose its own flaw.
+V1 concerns authorization for a privileged operation. V4 concerns preservation of the initiating user's authority across service boundaries, even when ordinary API authorization is correct.
 
-All four flaws are required. Each will have an isolated vulnerable commit or branch, an exploit trace, a fix, and a regression test. The final version must pass all regression tests and deny the unauthorized operations.
+All four analyses document the existing controls, illustrative failure modes and actual regression-test results. Illustrative behavior is distinguished from observed results. The final version must pass all regression tests and deny unauthorized operations.
 
 The optional supply-chain experiment is deferred. If attempted, a malicious `eventkit` version must enter through the dependency install path; digest checks alone cannot contain an approved malicious package running inside Detection.
 
@@ -129,5 +129,5 @@ The optional supply-chain experiment is deferred. If attempted, a malicious `eve
 - Commit this settled lifecycle plan and its diagrams before feature implementation; preserve the full Git history and link the initial-plan commit in the report.
 - Provide exact README commands to build, seed, run, and test the three services and install the declared `eventkit` dependency.
 - Include the Jenkinsfile, functional and authorization tests, archived analysis and test results, and evidence of a deliberately failing release gate.
-- Write the 2,000–2,500-word report, excluding diagrams, tables, references, code excerpts, and appendices. Link design principles and all four experiments to code, commits, tests, logs, and gate results; discuss production-release gaps.
+- Write the 2,000–2,500-word report, excluding diagrams, tables, references, code excerpts, and appendices. Link design principles and all four security analyses to relevant implementation excerpts, tests, logs, and actual gate results; discuss production-release gaps.
 - Submit the source repository, required artifacts, report, and AI-use declaration. The optional supply-chain experiment remains outside the MVP.

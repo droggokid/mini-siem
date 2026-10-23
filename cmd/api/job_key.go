@@ -15,6 +15,7 @@ func readOrCreateJobKey(seedPath, publicPath string) (ed25519.PrivateKey, error)
 		return nil, err
 	}
 
+	// Validate the encoded seed and exact key size before constructing a signing key.
 	seed, err := hex.DecodeString(string(bytes.TrimSpace(encoded)))
 	if err != nil || len(seed) != ed25519.SeedSize {
 		return nil, errors.New("invalid job signing seed")
@@ -25,6 +26,7 @@ func readOrCreateJobKey(seedPath, publicPath string) (ed25519.PrivateKey, error)
 
 	existing, err := os.ReadFile(publicPath)
 	if err == nil {
+		// Fail on mismatched key material instead of silently replacing a verifier's key.
 		if !bytes.Equal(bytes.TrimSpace(existing), public) {
 			return nil, errors.New("job public key does not match signing seed")
 		}

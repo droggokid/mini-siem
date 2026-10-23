@@ -26,6 +26,7 @@ func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTo
 	router.POST("/login", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 
+		// Accept JSON credentials only, with a bounded body before decoding.
 		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 		if err != nil || mediaType != "application/json" {
 			c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "expected application/json"})
@@ -47,9 +48,11 @@ func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTo
 			Password string `json:"password"`
 		}
 
+		// Validate request shape; the user store's SQL parameters prevent injection.
 		decoder := json.NewDecoder(bytes.NewReader(body))
 		decoder.DisallowUnknownFields()
 
+		// Check the whole document and required fields; Decode alone can accept trailing JSON.
 		if !json.Valid(body) || decoder.Decode(&credentials) != nil ||
 			credentials.Username == "" || credentials.Password == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid login request"})
@@ -63,10 +66,12 @@ func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTo
 		}
 
 		if err != nil {
+			// Keep database error details out of the public login response.
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
 		}
 
+		// Bind identity and role to the account store, never to client-supplied claims.
 		token, err := tokens.Sign(auth.Identity{ID: user.ID, Role: user.Role})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
@@ -90,10 +95,12 @@ func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTo
 	})
 
 	events := eventHandler(eventURL, eventTokens)
+	// Authenticate public requests; Event enforces the delegated owner's data scope.
 	router.POST("/events", tokens.Middleware(), events)
 	router.GET("/events", tokens.Middleware(), events)
 	router.GET("/admin/events", tokens.Middleware(), func(c *gin.Context) {
 		identity, _ := auth.FromContext(c.Request.Context())
+		// Authorize cross-owner access before the proxy can sign privileged authority.
 		if identity.Role != "admin" {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 			return

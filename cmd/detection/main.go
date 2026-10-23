@@ -31,6 +31,7 @@ func run() error {
 	if eventURL == "" {
 		eventURL = "http://event:8080"
 	}
+	// Reject malformed service configuration before any delegated request is sent.
 	endpoint, err := url.Parse(eventURL)
 	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
 		endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
