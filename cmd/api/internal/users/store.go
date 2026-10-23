@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -13,6 +14,9 @@ import (
 
 //go:embed schema.sql
 var schema string
+
+// ErrAuthentication indicates an unknown username or an invalid password.
+var ErrAuthentication = errors.New("invalid username or password")
 
 type userRow struct {
 	ID           int64  `db:"id"`
@@ -93,6 +97,26 @@ func (s *Store) LookupByUsername(ctx context.Context, username string) (User, er
 		Scan(&row.ID, &row.Username, &row.PasswordHash, &row.Role)
 	if err != nil {
 		return User{}, fmt.Errorf("look up user: %w", err)
+	}
+	return User{ID: row.ID, Username: row.Username, Role: row.Role}, nil
+}
+
+// Authenticate verifies credentials and returns the user's identity.
+func (s *Store) Authenticate(ctx context.Context, username, password string) (User, error) {
+	var row userRow
+	err := s.psql.Select("id", "username", "password_hash", "role").
+		From("users").
+		Where(sq.Eq{"username": username}).
+		QueryRowContext(ctx).
+		Scan(&row.ID, &row.Username, &row.PasswordHash, &row.Role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrAuthentication
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("authenticate user: %w", err)
+	}
+	if err = bcrypt.CompareHashAndPassword(row.PasswordHash, []byte(password)); err != nil {
+		return User{}, ErrAuthentication
 	}
 	return User{ID: row.ID, Username: row.Username, Role: row.Role}, nil
 }
