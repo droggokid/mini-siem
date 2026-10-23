@@ -1,0 +1,10 @@
+
+%%{init: {"theme": "dark"}}%%
+flowchart TB
+  C["Client"] <-->|"HTTP / JWT"| A["API Service"]
+  A -->|"User lookup"| U[("SQLite - Users")]
+  A <-->|"HTTP / Scoped authority"| E["Event Service"]
+  A <-->|"HTTP / Authorized job"| D["Detection Service"]
+  D <-->|"Scoped event reads / Alert writes"| E
+  D -->|"Analyze"| K["eventkit - Go module"]
+  E --> S[("In-memory events and alerts")]
