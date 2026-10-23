@@ -20,9 +20,10 @@ type eventClaims struct {
 
 // SignEvent uses a dedicated API-to-Event Tokens instance, never the user-JWT key.
 func (t *Tokens) SignEvent(ownerID int64, action string) (string, error) {
-	if ownerID <= 0 || (action != AddEvent && action != ListEvents) {
+	if ownerID <= 0 || (action != AddEvent && action != ListEvents && action != ListAlerts) {
 		return "", errors.New("invalid Event authority scope")
 	}
+
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, eventClaims{
 		Action:    action,
 		Issuer:    "mini-siem-api",
@@ -41,9 +42,11 @@ func (t *Tokens) ValidateEvent(raw, action string) (int64, error) {
 	if err != nil {
 		return 0, errors.New("invalid Event authority")
 	}
+
 	ownerID, err := strconv.ParseInt(c.Subject, 10, 64)
-	if err != nil || ownerID <= 0 || c.Action != action || (action != AddEvent && action != ListEvents) {
+	if err != nil || ownerID <= 0 || c.Action != action || (action != AddEvent && action != ListEvents && action != ListAlerts) {
 		return 0, errors.New("invalid Event authority scope")
 	}
+
 	return ownerID, nil
 }

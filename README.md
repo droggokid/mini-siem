@@ -1,13 +1,12 @@
 # Mini-SIEM
 
-Mini-SIEM is a small security event monitor for Assignment I. Alice, Bob, and Admin submit events and inspect their own events and alerts. Admin can also view all users' events through a separate operation. A detection run checks the caller's events for at least five failed logins from the same IP within five minutes and saves alerts.
+Mini-SIEM is a small security event monitor for Assignment I. Alice, Bob, and Admin submit events and inspect their own events and alerts. A detection run checks the caller's events for at least five failed logins from the same IP within five minutes and saves alerts. The separate admin-wide event operation remains planned.
 
-The planned system has three separate Go services: API authenticates users, Event stores events and alerts, and Detection finds patterns using the separately installed `eventkit` package. Users log in with seeded accounts stored in SQLite and receive short-lived JWTs. API alone accesses the users database and establishes scoped authority for inter-service calls. The detection run calls all three services.
+The system has three separate Go services: API authenticates users, Event stores events and alerts, and Detection applies a local, independently tested Go rule. Extraction into `eventkit` is deferred. Users log in with seeded accounts stored in SQLite and receive short-lived JWTs. API alone accesses the users database and establishes scoped authority for inter-service calls. The detection run calls all three services.
 
-The services will run locally with Docker Compose. The users database will persist in an API-only volume. Events and alerts will stay in memory and be lost when Event restarts. HTTP endpoints and automated tests provide the interface; curl examples will show how to use it.
+The services run locally with Docker Compose. The users database persists in an API-only volume. Events and alerts stay in memory and are lost when Event restarts. HTTP endpoints, automated tests, and curl examples provide the interface.
 
-Login, identity, event submission, and owner-scoped event listing are implemented.
-Detection, alerts, and admin endpoints remain planned.
+Login, identity, event submission/listing, synchronous detection (FR-04), and owner-scoped alert listing (FR-05) are implemented.
 
 ## Project documents
 
@@ -23,7 +22,7 @@ Requirements: Go 1.27.3, Docker with Docker Compose, make, and curl.
 
 API, Event, and Detection are separate executables. Each exposes
 `GET /health`, returning HTTP 200 with the body `ok`.
-API and Event use [Gin](https://github.com/gin-gonic/gin) for REST routing and JSON responses.
+All three services use [Gin](https://github.com/gin-gonic/gin) for REST routing and JSON responses.
 
 Only API publishes a host port, at `127.0.0.1:8080`.
 Event and Detection are accessible through the internal Docker network.
@@ -71,6 +70,13 @@ mounted read-only by Event; Detection cannot access it. Event waits for API's
 healthcheck before starting, then reads this secret and independently validates
 each delegated event operation. The user-JWT secret is never shared with Event.
 
+API also creates an Ed25519 signing seed at `/data/job-seed` and publishes only
+its public key at `/run/job-auth/public`. Event and Detection mount the public
+key volume read-only. Detection has no users database, user-JWT secret, Event
+HMAC secret, or private signing seed. Both services wait for API's healthcheck
+before loading the public key. Existing keys are reused; mismatched or malformed
+key files stop startup.
+
 ```sh
 make ps
 make logs
@@ -91,15 +97,15 @@ hashes, and initialization preserves existing accounts and hashes.
 Usernames are case-sensitive.
 
 Compose mounts `users-data` at `/data` only in API. Event and Detection have no
-database mount. The volumes preserve the database and both secrets through
+database mount. The volumes preserve the database and authorization keys through
 container recreation and `docker compose down`; `docker compose down --volumes`
 deletes them and invalidates existing tokens. Events are held only in Event's
-memory and disappear whenever that process restarts.
+memory and disappear whenever that process restarts, along with alerts.
 
 For local runs without Docker, start API from the repository root:
 
 ```sh
-EVENT_URL=http://127.0.0.1:8081 go run ./cmd/api
+EVENT_URL=http://127.0.0.1:8081 DETECTION_URL=http://127.0.0.1:8082 go run ./cmd/api
 ```
 
 Once API is listening, start Event in another terminal from the same directory:
@@ -107,6 +113,17 @@ Once API is listening, start Event in another terminal from the same directory:
 ```sh
 EVENT_ADDR=127.0.0.1:8081 go run ./cmd/event
 ```
+
+Start Detection in a third terminal:
+
+```sh
+DETECTION_ADDR=127.0.0.1:8082 EVENT_URL=http://127.0.0.1:8081 go run ./cmd/detection
+```
+
+API creates `.secrets/job-seed` and `.secrets/job-public` for local runs.
+`JOB_SEED_FILE` (API only) and `JOB_PUBLIC_KEY_FILE` override these paths.
+`DETECTION_URL` selects API's Detection upstream; `DETECTION_ADDR` and `API_ADDR`
+override the listen addresses. Detection needs only the public key file.
 
 API creates `.secrets/event-secret`; Event reads it without creating or replacing
 it. Both services accept `EVENT_SECRET_FILE` to override that path. Keep this
@@ -208,6 +225,40 @@ private. Tokens can be replayed until expiry, the local HTTP network is not
 encrypted, and the in-memory store has no retention limit. See
 [the authorization decision and limitations](docs/design-decisions.md#dd-008--scoped-inter-service-authorization).
 
+### Run detection and list alerts
+
+Submit at least five `login.failed` events for the same source IP, then run:
+
+```sh
+TOKEN='<access_token from login>'
+curl --fail --silent --show-error -X POST http://127.0.0.1:8080/detections/run \
+  -H "Authorization: Bearer $TOKEN"
+curl --fail --silent --show-error http://127.0.0.1:8080/alerts \
+  -H "Authorization: Bearer $TOKEN"
+unset TOKEN
+```
+
+`POST /detections/run` accepts no parameters (an empty body or empty JSON object)
+and returns `job_id`, `events_scanned`, and `alerts_created` with HTTP 200.
+The rule uses Event's ingestion timestamps and any rolling five-minute window,
+including events exactly five minutes apart. Unrelated types are ignored.
+Equivalent IP spellings are grouped. Each qualifying IP produces one alert per
+run, recording the largest failed-login count within a five-minute window.
+Historical events are included, so another run can create another alert.
+
+`GET /alerts` returns an array containing only the authenticated owner's alerts,
+or `[]`. Each alert contains `id`, `owner_id`, `source_ip`, `detection_type`
+(`failed_login_burst`), `failed_login_count`, and `created_at`. Admin uses the
+same owner scope. Caller-selected owners and query parameters are rejected.
+
+API issues separate 30-second permissions for running the job, reading its
+owner's events, and writing its alerts. Detection checks that all permissions
+name the same owner and job. Event independently verifies each read and write.
+These permissions use a separate signing key; Detection cannot mint them.
+The entire alert batch is validated before storage. Batches over 64 KiB fail
+without storing alerts. Calls are synchronous with bounded timeouts and no
+automatic retries; a failed response after storage may still have created alerts.
+
 ### Verify
 
 After `make up`, verify the running setup:
@@ -219,8 +270,18 @@ make verify
 This checks all three health endpoints and stops after printing
 `All three health checks passed.`
 
-Run the Go tests, including authentication, event isolation, and service-authority
-checks, with `make test`. Run `go test -race ./...` to include race detection.
+Run the Go tests, including authentication, rule boundaries, owner/job isolation,
+concurrent alert storage, and the three-service integration test, with `make test`.
+The integration test builds and starts real service executables with temporary
+keys and a fresh users database; it cleans them up afterward.
+Run `go test -race ./...` to include race detection, and `go vet ./...` for static checks.
+To exercise a fresh, otherwise unused Compose stack with the same integration workflow:
+
+```sh
+MINI_SIEM_TEST_URL=http://127.0.0.1:8080 go test -count=1 -run '^TestDetectionIntegration$' .
+```
+
+This submits synthetic events and creates alerts; use a fresh verification stack.
 For manual requests, see
 [curl examples](docs/curl.md).
 

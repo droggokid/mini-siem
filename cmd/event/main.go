@@ -34,6 +34,15 @@ func run() error {
 		return fmt.Errorf("invalid Event authorization secret: %w", err)
 	}
 
+	publicPath := os.Getenv("JOB_PUBLIC_KEY_FILE")
+	if publicPath == "" {
+		publicPath = ".secrets/job-public"
+	}
+	jobKey, err := auth.ReadJobPublicKey(publicPath)
+	if err != nil {
+		return err
+	}
+
 	addr := os.Getenv("EVENT_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -43,7 +52,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           newRouter(&store, tokens),
+		Handler:           newRouter(&store, tokens, jobKey),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

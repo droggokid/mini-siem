@@ -85,11 +85,12 @@ formats aligned as endpoints change. See [curl examples](curl.md), the
 
 ## DD-005 — Three Go services with a small HTTP interface
 
-**Status:** Accepted; login, identity, and event submission/listing are implemented.
-Detection, alerts, and admin operations remain planned.
+**Status:** Accepted; login, identity, events, detection and alerts are implemented.
+The separate admin event operation remains planned.
 
 **Decision:** Keep API, Event, and Detection as separate Go executables using
-HTTP/JSON. Detection will consume the separately versioned `eventkit` module.
+HTTP/JSON. Detection currently implements its rule locally; `eventkit` extraction
+is deferred (DD-009).
 
 **Why:** The assignment needs a detection workflow that crosses service trust
 boundaries and exercises a declared dependency. This makes those boundaries and
@@ -102,11 +103,11 @@ See the [initial architecture and dependency plan](initial-plan.md#architecture-
 
 ## DD-006 — SQLite users, bcrypt passwords, in-memory events
 
-**Status:** Accepted; users and in-memory event storage exist. Alert storage remains planned.
+**Status:** Accepted; users and in-memory event/alert storage are implemented.
 
 **Decision:** API alone owns a persistent SQLite users database, seeded with
 Alice, Bob, and Admin. Store bcrypt hashes and preserve existing accounts on
-initialization. Event keeps events in memory; alerts will also stay in memory.
+initialization. Event keeps both events and alerts in memory.
 
 **Why:** SQLite avoids a separate database service for three local demo accounts.
 Bcrypt satisfies the established password-hashing requirement. In-memory event
@@ -130,7 +131,9 @@ API and mounted read-only by Event. Detection receives neither volume.
 secrets on startup. Event starts after API's healthcheck succeeds, so a fresh
 deployment has a complete service-secret file before Event reads it.
 `make verify` checks all three health endpoints; `make test` runs Go tests separately.
-`docker compose down` preserves the database and both secrets;
+DD-009 adds a public-key-only `job-auth` volume for Event and Detection; API alone
+keeps the private job seed in `users-data`.
+`docker compose down` preserves the database and authorization keys;
 `docker compose down --volumes` deletes them and invalidates existing tokens.
 
 **Why:** This supports a repeatable local environment and keeps credentials and
@@ -143,13 +146,14 @@ deployment secret management before that scope changes. See [Compose](../compose
 ## DD-008 — Scoped inter-service authorization
 
 **Status:** Accepted and implemented for API → Event submission and owner listing.
-Detection and job-scoped authority remain deferred.
+Owner alert listing uses the same mechanism with action `alerts:list`.
+Detection's job-scoped authority is implemented separately in DD-009.
 
 **Decision:** Reuse the shared authentication package with a separate HS256
 secret for API-to-Event delegation. API derives the owner from its verified user
 identity and signs a new token for each internal request. The token has issuer
 `mini-siem-api`, audience `mini-siem-event`, the owner's positive ID in `sub`,
-action `events:add` or `events:list`, and an expiry 30 seconds after issuance.
+action `events:add`, `events:list`, or `alerts:list`, and an expiry 30 seconds after issuance.
 API never forwards the user's JWT to Event.
 
 Event independently pins HS256 and checks the signature, issuer, audience,
@@ -186,6 +190,58 @@ API uses a bounded upstream timeout, returns HTTP 502 for backend failures and
 HTTP 504 for timeouts, and does not retry event submissions: a timed-out request
 may already have stored its event. Storage remains unbounded in memory and list
 responses have no pagination; revisit retention and pagination before sustained
-loads. Detection will need separate owner/action/job authority rather than this
-API-only secret. See
+loads. Detection uses separate owner/action/job authority (DD-009). See
 [NFR-03 and the access model](initial-plan.md#non-functional-requirements).
+
+## DD-009 — Local synchronous detection and signed job permissions
+
+**Status:** Accepted and implemented for FR-04 and FR-05. Defers the initial
+plan's `eventkit` dependency until a later extraction; the initial plan is retained.
+
+**Decision:** `POST /detections/run` runs synchronously for the authenticated
+JWT owner. API creates a random job ID and three separate 30-second tokens:
+Detection may run the job; Event may read the owner's events; Event may write
+the job's alerts. Each names the receiving service, owner, action and job.
+The job header must match the signed job ID. Detection verifies all permissions
+and their matching owner/job before fetching events. Event verifies each read
+and write independently and uses only the signed owner. Admin has the same
+owner restriction. User JWTs are accepted only by API.
+
+Job tokens use Ed25519 through the installed JWT library. Verification pins
+EdDSA, issuer `mini-siem-api`, receiving audience, expiry, positive owner ID,
+action and job ID. API alone holds the private seed. Event and Detection receive
+only the public key, so Detection cannot sign expanded authority. This extends
+the existing token/middleware/context pattern without sharing either HMAC secret.
+
+API stores `/data/job-seed` in its existing private volume and publishes
+`/run/job-auth/public` in a new `job-auth` volume, mounted read-only by Event and
+Detection. Both wait for API's healthcheck before loading the key. Local defaults
+are `.secrets/job-seed` and `.secrets/job-public`; `JOB_SEED_FILE` (API only) and
+`JOB_PUBLIC_KEY_FILE` override them. Existing keys are reused; malformed,
+unreadable or mismatched files stop startup without replacement.
+
+The pure local rule groups `login.failed` ingestion timestamps by canonical IP,
+sorts each group, and counts an inclusive rolling five-minute window. It emits
+one finding per qualifying IP with the largest window count. Event validates
+the whole batch before storing alerts and assigns IDs and creation timestamps.
+`GET /alerts` uses the existing API-to-Event HMAC action `alerts:list` and returns
+only that owner's alerts.
+
+**Why:** This meets the three-service workflow without new dependencies,
+workers, queues or persistence. Public-key verification lets Detection check
+permissions without gaining signing authority. The pure rule can later move
+into `eventkit`.
+
+**Tradeoff / revisit:** New runs may create fresh alerts from historical events.
+There is no replay cache; permissions remain usable for the same owner/action/job
+until expiry. Add replay protection before expanding beyond local synthetic data.
+HTTP remains unencrypted. Calls have bounded timeouts, refuse redirects and never
+retry automatically; failure after Event stores a batch may leave an unknown
+outcome. Batches over 64 KiB fail before storage. Events and alerts remain
+unbounded in memory and disappear on Event restart. Rotation requires replacing
+the seed and matching public key and restarting all services.
+
+**Verification:** Rule, authorization, malformed-input and concurrent-storage
+tests cover the boundaries above. `integration_test.go` runs real API, Detection
+and Event processes with temporary keys/database. `MINI_SIEM_TEST_URL` runs the
+same acceptance workflow against a fresh Compose stack.

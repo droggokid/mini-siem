@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -29,11 +31,31 @@ func (t *Tokens) EventMiddleware(action string) gin.HandlerFunc {
 	}
 }
 
+type jobKey struct{}
+
+func JobFromContext(ctx context.Context) JobScope {
+	scope, _ := ctx.Value(jobKey{}).(JobScope)
+	return scope
+}
+
+func JobMiddleware(key ed25519.PublicKey, service, action string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		scope, err := VerifyJob(key, bearer(c.Request), service, action)
+		if len(c.Request.Header.Values(JobHeader)) != 1 || c.GetHeader(JobHeader) != scope.JobID {
+			err = errors.New("mismatched job")
+		}
+
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), jobKey{}, scope))
+		authenticate(c, Identity{ID: scope.OwnerID}, err)
+	}
+}
+
 func bearer(r *http.Request) string {
 	header := strings.Fields(r.Header.Get("Authorization"))
 	if len(r.Header.Values("Authorization")) == 1 && len(header) == 2 && strings.EqualFold(header[0], "Bearer") {
 		return header[1]
 	}
+
 	return ""
 }
 
@@ -44,6 +66,7 @@ func authenticate(c *gin.Context, identity Identity, err error) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
+
 	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), identityKey{}, identity))
 	c.Next()
 }

@@ -7,7 +7,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -o /service ./cmd/api
 
 FROM alpine:3.24.3
-RUN mkdir -p /data /run/event-auth && chown 65532:65532 /data /run/event-auth && chmod 700 /data /run/event-auth
+RUN mkdir -p /data /run/event-auth /run/job-auth && chown 65532:65532 /data /run/event-auth /run/job-auth && chmod 700 /data /run/event-auth /run/job-auth
 COPY --from=build /service /service
 USER 65532:65532
 ENTRYPOINT ["/service"]

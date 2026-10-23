@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTokens *auth.Tokens) http.Handler {
+func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTokens *auth.Tokens, detectionURL string, jobKey ed25519.PrivateKey) http.Handler {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 
@@ -91,6 +92,8 @@ func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTo
 	events := eventHandler(eventURL, eventTokens)
 	router.POST("/events", tokens.Middleware(), events)
 	router.GET("/events", tokens.Middleware(), events)
+	router.GET("/alerts", tokens.Middleware(), events)
+	router.POST("/detections/run", tokens.Middleware(), detectionHandler(detectionURL, jobKey))
 
 	return router
 }

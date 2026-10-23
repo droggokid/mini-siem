@@ -94,6 +94,96 @@
           "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Bob receives an event array', function () { pm.response.to.have.status(200); pm.expect(pm.response.json()).to.be.an('array'); });"] } }]
         },
         {
+          "name": "Alice failure 2 of 5 — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"type\":\"login.failed\",\"source_ip\":\"192.0.2.1\"}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Failure is ingested', function () { pm.response.to.have.status(201); });"] } }]
+        },
+        {
+          "name": "Alice failure 3 of 5 — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"type\":\"login.failed\",\"source_ip\":\"192.0.2.1\"}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Failure is ingested', function () { pm.response.to.have.status(201); });"] } }]
+        },
+        {
+          "name": "Alice failure 4 of 5 — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"type\":\"login.failed\",\"source_ip\":\"192.0.2.1\"}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Failure is ingested', function () { pm.response.to.have.status(201); });"] } }]
+        },
+        {
+          "name": "Alice failure 5 of 5 — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"type\":\"login.failed\",\"source_ip\":\"192.0.2.1\"}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Failure is ingested', function () { pm.response.to.have.status(201); });"] } }]
+        },
+        {
+          "name": "Alice runs detection — 200",
+          "request": { "method": "POST", "url": "http://{{api_host}}/detections/run", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Detection creates an alert', function () { pm.response.to.have.status(200); const result = pm.response.json(); pm.expect(result.job_id).to.be.a('string').and.not.empty; pm.expect(result.events_scanned).to.be.at.least(5); pm.expect(result.alerts_created).to.be.at.least(1); });"] } }]
+        },
+        {
+          "name": "Alice lists her alerts — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/alerts", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Alice receives a failed-login alert', function () { pm.response.to.have.status(200); const alerts = pm.response.json(); pm.expect(alerts).to.be.an('array').and.not.empty; pm.expect(alerts.some(function (alert) { return alert.source_ip === '192.0.2.1' && alert.detection_type === 'failed_login_burst' && alert.failed_login_count >= 5; })).to.equal(true); });"] } }]
+        },
+        {
+          "name": "Bob runs only his detection — 200",
+          "request": { "method": "POST", "url": "http://{{api_host}}/detections/run", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Bob has no qualifying events in this workflow', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().alerts_created).to.equal(0); });"] } }]
+        },
+        {
+          "name": "Bob cannot see Alice alerts — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/alerts", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Bob has no alerts in this workflow', function () { pm.response.to.have.status(200); pm.expect(pm.response.json()).to.deep.equal([]); });"] } }]
+        },
+        {
+          "name": "Admin runs only own detection — 200",
+          "request": { "method": "POST", "url": "http://{{api_host}}/detections/run", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Admin does not analyze Alice events', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().alerts_created).to.equal(0); });"] } }]
+        },
+        {
+          "name": "Admin lists only own alerts — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/alerts", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Admin cannot see Alice alerts', function () { pm.response.to.have.status(200); pm.expect(pm.response.json()).to.deep.equal([]); });"] } }]
+        },
+        {
+          "name": "Detection rejects supplied ownership — 400",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/detections/run",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"owner_id\":1}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Owner selection is rejected', function () { pm.response.to.have.status(400); });"] } }]
+        },
+        {
+          "name": "Detection without token — 401",
+          "request": { "method": "POST", "url": "http://{{api_host}}/detections/run", "auth": { "type": "noauth" } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Detection requires authentication', function () { pm.response.to.have.status(401); });"] } }]
+        },
+        {
+          "name": "Alerts without token — 401",
+          "request": { "method": "GET", "url": "http://{{api_host}}/alerts", "auth": { "type": "noauth" } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Alerts require authentication', function () { pm.response.to.have.status(401); });"] } }]
+        },
+        {
           "name": "Bob supplies owner query — 400",
           "request": {
             "method": "GET",
