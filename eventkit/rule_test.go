@@ -1,4 +1,4 @@
-package main
+package eventkit
 
 import (
 	"reflect"
@@ -23,13 +23,13 @@ func TestDetect(t *testing.T) {
 		{"maximum", []time.Duration{0, 0, 0, 0, 0, time.Minute, 10 * time.Minute}, 6},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var input []event
+			var input []Event
 			for _, offset := range tt.offsets {
-				input = append(input, event{Type: "login.failed", SourceIP: "192.0.2.1", IngestedAt: base.Add(offset)})
+				input = append(input, Event{Type: "login.failed", SourceIP: "192.0.2.1", IngestedAt: base.Add(offset)})
 			}
 			slices.Reverse(input)
 			before := slices.Clone(input)
-			got := detect(input)
+			got := Detect(input)
 			if tt.want == 0 && len(got) != 0 || tt.want > 0 && (len(got) != 1 || got[0].FailedLoginCount != tt.want) {
 				t.Fatalf("got %+v want count %d", got, tt.want)
 			}
@@ -42,18 +42,18 @@ func TestDetect(t *testing.T) {
 
 func TestDetectGroupsIPsAndIgnoresOtherTypes(t *testing.T) {
 	base := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	var input []event
+	var input []Event
 	for range 5 {
 		for _, ip := range []string{"192.0.2.1", "2001:db8::1"} {
-			input = append(input, event{Type: "login.failed", SourceIP: ip, IngestedAt: base})
+			input = append(input, Event{Type: "login.failed", SourceIP: ip, IngestedAt: base})
 		}
 	}
-	input = append(input, event{Type: "login.failed", SourceIP: "2001:0db8:0:0:0:0:0:1", IngestedAt: base})
+	input = append(input, Event{Type: "login.failed", SourceIP: "2001:0db8:0:0:0:0:0:1", IngestedAt: base})
 	for range 10 {
-		input = append(input, event{Type: "login.success", SourceIP: "192.0.2.1", IngestedAt: base}, event{Type: "login.failed", SourceIP: "invalid", IngestedAt: base})
+		input = append(input, Event{Type: "login.success", SourceIP: "192.0.2.1", IngestedAt: base}, Event{Type: "login.failed", SourceIP: "invalid", IngestedAt: base})
 	}
-	input = append(input, event{Type: "login.failed", SourceIP: "192.0.2.2", IngestedAt: base})
-	got := detect(input)
+	input = append(input, Event{Type: "login.failed", SourceIP: "192.0.2.2", IngestedAt: base})
+	got := Detect(input)
 	if len(got) != 2 || got[0].SourceIP != "192.0.2.1" || got[0].FailedLoginCount != 5 || got[1].FailedLoginCount != 6 {
 		t.Fatalf("mixed events: %+v", got)
 	}

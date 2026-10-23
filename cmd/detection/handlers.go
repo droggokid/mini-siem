@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/droggokid/mini-siem/eventkit"
 	"github.com/droggokid/mini-siem/internal/auth"
 	"github.com/gin-gonic/gin"
 )
@@ -76,21 +77,26 @@ func newRouter(eventURL string, jobKey ed25519.PublicKey) http.Handler {
 		}
 
 		data, err := eventRequest(c, client, eventURL, http.MethodGet, "/jobs/events", input.ReadToken, scope.JobID, nil, http.StatusOK)
-		var events []event
+		var events []struct {
+			OwnerID int64 `json:"owner_id"`
+			eventkit.Event
+		}
 		if err != nil || json.Unmarshal(data, &events) != nil || events == nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Event service unavailable"})
 			return
 		}
 
-		for _, event := range events {
+		ruleEvents := make([]eventkit.Event, len(events))
+		for index, event := range events {
 			_, ipErr := netip.ParseAddr(event.SourceIP)
 			if event.OwnerID != scope.OwnerID || event.IngestedAt.IsZero() || ipErr != nil {
 				c.JSON(http.StatusBadGateway, gin.H{"error": "invalid Event service response"})
 				return
 			}
+			ruleEvents[index] = event.Event
 		}
 
-		findings := detect(events)
+		findings := eventkit.Detect(ruleEvents)
 		if len(findings) > 0 {
 			body, err = json.Marshal(findings)
 			if err != nil || len(body) > 64*1024 {

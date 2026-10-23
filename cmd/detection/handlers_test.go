@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/droggokid/mini-siem/eventkit"
 	"github.com/droggokid/mini-siem/internal/auth"
 )
 
@@ -93,7 +94,7 @@ func TestDetectionWorkflowAndUpstreamFailures(t *testing.T) {
 					if r.URL.Path != "/jobs/alerts" || r.Header.Get("Authorization") != "Bearer "+write {
 						t.Error("wrong write authority")
 					}
-					var alerts []finding
+					var alerts []eventkit.Finding
 					if json.NewDecoder(r.Body).Decode(&alerts) != nil || len(alerts) != 1 || alerts[0].FailedLoginCount != 5 {
 						t.Error("incorrect findings")
 					}
