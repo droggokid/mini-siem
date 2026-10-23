@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func newRouter(store *events.Store, tokens *auth.Tokens) http.Handler {
+func newRouter(store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKey) http.Handler {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 
@@ -69,31 +70,14 @@ func newRouter(store *events.Store, tokens *auth.Tokens) http.Handler {
 		c.JSON(http.StatusCreated, event)
 	})
 
-	router.GET("/events", tokens.EventMiddleware(auth.ListEvents), func(c *gin.Context) {
+	listEvents := func(c *gin.Context) {
 		identity, ok := auth.FromContext(c.Request.Context())
 		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
 
-		if c.Request.URL.RawQuery != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "query parameters are not supported"})
-			return
-		}
-
-		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 64*1024))
-		if err != nil {
-			if _, ok = errors.AsType[*http.MaxBytesError](err); ok {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body too large"})
-			} else {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-			}
-
-			return
-		}
-
-		if len(body) != 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "GET must not have a body"})
+		if _, ok := readRequest(c); !ok {
 			return
 		}
 
@@ -103,7 +87,10 @@ func newRouter(store *events.Store, tokens *auth.Tokens) http.Handler {
 		}
 
 		c.JSON(http.StatusOK, owned)
-	})
+	}
+	router.GET("/events", tokens.EventMiddleware(auth.ListEvents), listEvents)
+	router.GET("/jobs/events", auth.JobMiddleware(jobKey, auth.EventService, auth.ListEvents), listEvents)
 
+	registerAlerts(router, store, tokens, jobKey)
 	return router
 }

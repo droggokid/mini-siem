@@ -40,8 +40,13 @@ func eventHandler(eventURL string, tokens *auth.Tokens) gin.HandlerFunc {
 			return
 		}
 		action := auth.AddEvent
+		path := "/events"
 		if c.Request.Method == http.MethodGet {
 			action = auth.ListEvents
+			if c.Request.URL.Path == "/alerts" {
+				action = auth.ListAlerts
+				path = "/alerts"
+			}
 			if len(body) != 0 {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "GET must not have a body"})
 				return
@@ -53,7 +58,7 @@ func eventHandler(eventURL string, tokens *auth.Tokens) gin.HandlerFunc {
 			return
 		}
 		r, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method,
-			strings.TrimRight(eventURL, "/")+"/events", bytes.NewReader(body))
+			strings.TrimRight(eventURL, "/")+path, bytes.NewReader(body))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return

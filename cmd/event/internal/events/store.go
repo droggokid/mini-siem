@@ -15,6 +15,7 @@ import (
 type Store struct {
 	mu     sync.RWMutex
 	events []Event
+	alerts []Alert
 }
 
 // Add accepts an owner ID trusted by the caller and assigns ingestion metadata.

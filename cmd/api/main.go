@@ -63,6 +63,33 @@ func run() error {
 		endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
 		return errors.New("EVENT_URL must be an HTTP service URL without credentials, query, fragment or path")
 	}
+	detectionURL := os.Getenv("DETECTION_URL")
+	if detectionURL == "" {
+		detectionURL = "http://detection:8080"
+	}
+	endpoint, err = url.Parse(detectionURL)
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
+		endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
+		return errors.New("DETECTION_URL must be an HTTP service URL without credentials, query, fragment or path")
+	}
+
+	seedPath := os.Getenv("JOB_SEED_FILE")
+	if seedPath == "" {
+		seedPath = ".secrets/job-seed"
+	}
+	publicPath := os.Getenv("JOB_PUBLIC_KEY_FILE")
+	if publicPath == "" {
+		publicPath = ".secrets/job-public"
+	}
+	jobKey, err := readOrCreateJobKey(seedPath, publicPath)
+	if err != nil {
+		return fmt.Errorf("cannot initialize job authorization: %w", err)
+	}
+	if bytes.Equal(jobKey.Seed(), bytes.TrimSpace(secret)) || bytes.Equal(jobKey.Seed(), bytes.TrimSpace(eventSecret)) ||
+		bytes.Equal([]byte(hex.EncodeToString(jobKey.Seed())), bytes.TrimSpace(secret)) ||
+		bytes.Equal([]byte(hex.EncodeToString(jobKey.Seed())), bytes.TrimSpace(eventSecret)) {
+		return errors.New("job signing seed must differ from existing authorization secrets")
+	}
 
 	path := os.Getenv("USERS_DB_PATH")
 	if path == "" {
@@ -76,13 +103,18 @@ func run() error {
 
 	defer store.Close()
 
+	addr := os.Getenv("API_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+
 	server := &http.Server{
-		Addr:              ":8080",
-		Handler:           newRouter(store, tokens, eventURL, eventTokens),
+		Addr:              addr,
+		Handler:           newRouter(store, tokens, eventURL, eventTokens, detectionURL, jobKey),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Print("listening on :8080")
+	log.Printf("listening on %s", addr)
 	return server.ListenAndServe()
 }
 

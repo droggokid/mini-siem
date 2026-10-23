@@ -33,7 +33,7 @@ func testAPI(t *testing.T) (http.Handler, *users.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newRouter(store, tokens, "http://event:8080", eventTokens), store
+	return newRouter(store, tokens, "http://event:8080", eventTokens, "http://detection:8080", nil), store
 }
 
 func request(handler http.Handler, method, path, body, authorization string) *httptest.ResponseRecorder {

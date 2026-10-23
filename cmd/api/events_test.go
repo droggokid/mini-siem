@@ -31,7 +31,7 @@ func eventAPI(t *testing.T, upstream http.Handler) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newRouter(store, userTokens, server.URL, eventTokens)
+	return newRouter(store, userTokens, server.URL, eventTokens, "http://detection:8080", nil)
 }
 
 func login(t *testing.T, handler http.Handler, username, password string) string {

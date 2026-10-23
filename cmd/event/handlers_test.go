@@ -21,7 +21,7 @@ func testHandler(t *testing.T) (http.Handler, *auth.Tokens) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newRouter(&events.Store{}, tokens), tokens
+	return newRouter(&events.Store{}, tokens, nil), tokens
 }
 
 func call(handler http.Handler, method, path, body, token string) *httptest.ResponseRecorder {

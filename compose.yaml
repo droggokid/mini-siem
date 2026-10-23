@@ -10,9 +10,13 @@ services:
       JWT_SECRET_FILE: /data/jwt-secret
       EVENT_SECRET_FILE: /run/event-auth/secret
       EVENT_URL: http://event:8080
+      DETECTION_URL: http://detection:8080
+      JOB_SEED_FILE: /data/job-seed
+      JOB_PUBLIC_KEY_FILE: /run/job-auth/public
     volumes:
       - users-data:/data
       - event-auth:/run/event-auth
+      - job-auth:/run/job-auth
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 2s
@@ -29,8 +33,10 @@ services:
       dockerfile: cmd/event/Dockerfile
     environment:
       EVENT_SECRET_FILE: /run/event-auth/secret
+      JOB_PUBLIC_KEY_FILE: /run/job-auth/public
     volumes:
       - event-auth:/run/event-auth:ro
+      - job-auth:/run/job-auth:ro
     depends_on:
       api:
         condition: service_healthy
@@ -41,12 +47,21 @@ services:
     build:
       context: .
       dockerfile: cmd/detection/Dockerfile
+    environment:
+      EVENT_URL: http://event:8080
+      JOB_PUBLIC_KEY_FILE: /run/job-auth/public
+    volumes:
+      - job-auth:/run/job-auth:ro
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
       - backend
 
 volumes:
   users-data: {}
   event-auth: {}
+  job-auth: {}
 
 networks:
   default: {}
