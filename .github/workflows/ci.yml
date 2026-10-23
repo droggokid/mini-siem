@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: 'off'
+  GOFLAGS: -mod=readonly
+  GOTOOLCHAIN: local
+  GIN_MODE: release
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Build, quality and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            eventkit/go.mod
+      - name: Verify dependencies and save inventory
+        run: bash scripts/ci-dependencies.sh
+      - name: Check formatting in both modules
+        run: |
+          mapfile -d '' files < <(find . -name .git -prune -o -type f -name '*.go' -print0)
+          unformatted=$(gofmt -l "${files[@]}")
+          if [[ -n "$unformatted" ]]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Build API, Event and Detection
+        run: go build ./cmd/api ./cmd/event ./cmd/detection
+      - name: Vet root module
+        run: go vet ./...
+      - name: Vet independent eventkit module
+        working-directory: eventkit
+        run: go vet ./...
+      - name: Install test reporter
+        id: reporter
+        run: go install gotest.tools/gotestsum@v1.13.0
+      - name: Root tests
+        if: ${{ !cancelled() && steps.reporter.outcome == 'success' }}
+        run: gotestsum --junitfile reports/root-tests.xml -- -count=1 -timeout=10m ./...
+      - name: Root race tests
+        if: ${{ !cancelled() && steps.reporter.outcome == 'success' }}
+        # Race-instrumented bcrypt must not contend with other test packages at startup.
+        run: gotestsum --junitfile reports/root-race.xml -- -race -p=1 -count=1 -timeout=10m ./...
+      - name: Independent eventkit tests
+        if: ${{ !cancelled() && steps.reporter.outcome == 'success' }}
+        working-directory: eventkit
+        run: gotestsum --junitfile ../reports/eventkit-tests.xml -- -count=1 -timeout=5m ./...
+      - name: Independent eventkit race tests
+        if: ${{ !cancelled() && steps.reporter.outcome == 'success' }}
+        working-directory: eventkit
+        run: gotestsum --junitfile ../reports/eventkit-race.xml -- -race -count=1 -timeout=5m ./...
+      - name: Remove arbitrary output from JUnit artifacts
+        id: sanitize
+        if: always()
+        run: |
+          python3 scripts/ci-reports.py --self-test
+          python3 scripts/ci-reports.py
+      - name: Upload dependency inventory and JUnit reports
+        if: ${{ always() && steps.sanitize.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: checks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/dependencies/*.txt
+            reports/dependencies/*.json
+            reports/*.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  security:
+    name: Dependency security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Prepare pinned scanner
+        id: scanner
+        run: |
+          mkdir -p reports
+          docker pull "$TRIVY_IMAGE"
+          docker run --rm "$TRIVY_IMAGE" --version | tee reports/trivy-version.txt
+      - name: Scan root dependencies, including published eventkit
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/reports:/reports" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" "$TRIVY_IMAGE" fs \
+            --scanners vuln --pkg-types library --severity HIGH,CRITICAL \
+            --exit-code 1 --format json --output /reports/trivy-root.json \
+            --ignorefile '' --skip-dirs /src/.git --skip-dirs /src/eventkit \
+            --skip-dirs /src/reports /src
+      - name: Scan independent eventkit dependencies
+        if: ${{ !cancelled() && steps.scanner.outcome == 'success' }}
+        run: |
+          docker run --rm -v "$PWD/eventkit:/src:ro" -v "$PWD/reports:/reports" \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" "$TRIVY_IMAGE" fs \
+            --scanners vuln --pkg-types library --severity HIGH,CRITICAL \
+            --exit-code 1 --format json --output /reports/trivy-eventkit.json \
+            --ignorefile '' /src
+      - name: Upload vulnerability reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/trivy-*.json
+            reports/trivy-version.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  integration:
+    name: Compose integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      COMPOSE_PROJECT_NAME: mini-siem-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMPOSE_FILE: compose.yaml:compose.ci.yaml
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install test reporter
+        run: go install gotest.tools/gotestsum@v1.13.0
+      - name: Build and exercise a fresh three-service stack
+        run: bash scripts/ci-compose.sh
+      - name: Ensure Compose resources are removed
+        if: always()
+        run: docker compose down --volumes --remove-orphans --rmi local --timeout 10
+      - name: Remove arbitrary output from JUnit artifacts
+        id: sanitize
+        if: always()
+        run: python3 scripts/ci-reports.py
+      - name: Upload integration report and sanitized diagnostics
+        if: ${{ always() && steps.sanitize.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/compose-*.xml
+            reports/compose-*.log
+          if-no-files-found: error
+          retention-days: 14

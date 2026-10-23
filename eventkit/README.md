@@ -39,4 +39,4 @@ GOWORK=off go vet ./...
 No `go.sum` is needed here because the module has no external dependencies.
 The consuming service records the released module's checksums in its `go.sum`.
 See the [repository README](../README.md#eventkit-dependency) for clean service
-builds and release steps. Never move or overwrite a published version tag.
+builds and release guidance. Never move or overwrite a published version tag.
