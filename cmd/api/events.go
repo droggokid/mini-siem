@@ -43,7 +43,11 @@ func eventHandler(eventURL string, tokens *auth.Tokens) gin.HandlerFunc {
 		path := "/events"
 		if c.Request.Method == http.MethodGet {
 			action = auth.ListEvents
-			if c.Request.URL.Path == "/alerts" {
+			switch c.Request.URL.Path {
+			case "/admin/events":
+				action = auth.ListAllEvents
+				path = "/admin/events"
+			case "/alerts":
 				action = auth.ListAlerts
 				path = "/alerts"
 			}

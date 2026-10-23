@@ -85,8 +85,8 @@ formats aligned as endpoints change. See [curl examples](curl.md), the
 
 ## DD-005 — Three Go services with a small HTTP interface
 
-**Status:** Accepted; login, identity, events, detection and alerts are implemented.
-The separate admin event operation remains planned.
+**Status:** Accepted; login, identity, events, detection, alerts and the separate
+admin event operation are implemented.
 
 **Decision:** Keep API, Event, and Detection as separate Go executables using
 HTTP/JSON. Detection uses the independently versioned `eventkit` module
@@ -154,6 +154,7 @@ secret for API-to-Event delegation. API derives the owner from its verified user
 identity and signs a new token for each internal request. The token has issuer
 `mini-siem-api`, audience `mini-siem-event`, the owner's positive ID in `sub`,
 action `events:add`, `events:list`, or `alerts:list`, and an expiry 30 seconds after issuance.
+DD-011 adds the separate privileged `events:list_all` action using this mechanism.
 API never forwards the user's JWT to Event.
 
 Event independently pins HS256 and checks the signature, issuer, audience,
@@ -161,8 +162,8 @@ expiration, positive owner ID, and action required by its route. It uses the
 verified subject as the sole owner for storage calls. Request JSON accepts only
 `type` and `source_ip`; unknown fields, including ownership, are rejected. The
 list operation accepts no caller-selected owner. Missing, forged, expired, or
-insufficient authority fails before any store access. Neither service exposes
-an admin event list yet.
+insufficient authority fails before any store access. DD-011 adds an independently
+authorized admin event list at both services.
 
 API generates the separate service secret with the existing random-secret file
 handling, using file mode `0600`, and rejects configurations that reuse its user
@@ -273,3 +274,46 @@ supply-chain experiment remains deferred.
 **Verification:** Independent rule tests, service and security tests, and a
 clean build using the published version without the local module directory.
 See [installation, build and release commands](../README.md#eventkit-dependency).
+
+## DD-011 — Separate admin event listing and privileged delegation
+
+**Status:** Accepted and implemented for FR-06, preserving NFR-02 and NFR-03.
+
+**Decision:** Expose `GET /admin/events` separately from `GET /events` in API and
+Event. API's existing user-JWT middleware rejects unauthenticated callers with
+HTTP 401. The explicit `identity.Role != "admin"` check in
+[API route registration](../cmd/api/handlers.go) returns HTTP 403 before invoking
+the proxy or signing any privileged authority. An authorized call uses the
+existing API-to-Event HS256 secret to sign the exact action `events:list_all`,
+issuer `mini-siem-api`, audience `mini-siem-event`, authenticated principal ID
+in `sub`, and a 30-second expiry. There is no new key or signing scheme.
+
+Event's separate route independently validates signature, algorithm, issuer,
+audience, expiry, positive principal ID and exact action through the existing
+middleware before calling `Store.ListAll()`. Here the subject identifies the
+requesting principal; it does not filter the returned owners. Event trusts the
+API-issued privileged capability, without duplicating API's user-role check.
+Ordinary event/alert capabilities, raw user JWTs and detection job permissions
+are rejected. Conversely, this action cannot authorize event submission,
+owner-scoped listing, alert reads/writes or detection jobs.
+
+Both endpoints reject query parameters and GET bodies, including owner IDs.
+Success returns an array of all stored events, including Admin's, or `[]` when
+empty. Admin's ordinary submission, event/alert listing and detection continue
+to use only Admin's verified owner ID. The access-control matrix is unchanged.
+
+**Why:** The three boundaries stay distinct: API checks the role, API signs a
+narrow capability, and Event independently checks that capability. This is the
+secure baseline for the planned V1 CWE-862 experiment: removing only API's role
+check would let an ordinary user obtain privileged delegation through the normal
+path. That vulnerability is not introduced here; no redundant role check or
+experiment-specific control is added. The original SSDLC plan remains intact.
+
+**Tradeoff / revisit:** The shared-secret, replay, unencrypted local HTTP,
+unbounded in-memory storage and unpaginated-list limitations from DD-008 apply.
+
+**Verification:** Focused API, Event and token tests cover admin success,
+401/403, role rejection before signing, malformed input, forged/expired/wrongly
+targeted authority, user/job-token rejection and action isolation. The existing
+real-service integration test checks all three owners, Admin's ordinary scope,
+the privileged listing and unchanged event/alert snapshots after rejected calls.

@@ -198,6 +198,69 @@
             "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] }
           },
           "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Owner query is rejected', function () { pm.response.to.have.status(400); });"] } }]
+        },
+        {
+          "name": "Bob submits own event — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"type\":\"login.succeeded\",\"source_ip\":\"192.0.2.2\"}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Bob event belongs to Bob', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().owner_id).to.equal(2); });"] } }]
+        },
+        {
+          "name": "Admin submits own event — 201",
+          "request": {
+            "method": "POST", "url": "http://{{api_host}}/events",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"type\":\"login.succeeded\",\"source_ip\":\"192.0.2.3\"}", "options": { "raw": { "language": "json" } } }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Admin event belongs to Admin', function () { pm.response.to.have.status(201); pm.expect(pm.response.json().owner_id).to.equal(3); });"] } }]
+        },
+        {
+          "name": "Admin lists only own events — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/events", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Ordinary Admin listing stays owner-scoped', function () { pm.response.to.have.status(200); const events = pm.response.json(); pm.expect(events).to.be.an('array').and.not.empty; pm.expect(events.every(function (event) { return event.owner_id === 3; })).to.equal(true); });"] } }]
+        },
+        {
+          "name": "Admin lists all users events — 200",
+          "request": { "method": "GET", "url": "http://{{api_host}}/admin/events", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Privileged listing includes Alice, Bob and Admin', function () { pm.response.to.have.status(200); const events = pm.response.json(); pm.expect(events).to.be.an('array'); [1, 2, 3].forEach(function (owner) { pm.expect(events.some(function (event) { return event.owner_id === owner; })).to.equal(true); }); });"] } }]
+        },
+        {
+          "name": "Alice cannot list all events — 403",
+          "request": { "method": "GET", "url": "http://{{api_host}}/admin/events", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{alice_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Alice is forbidden', function () { pm.response.to.have.status(403); });"] } }]
+        },
+        {
+          "name": "Bob cannot list all events — 403",
+          "request": { "method": "GET", "url": "http://{{api_host}}/admin/events", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{bob_token}}", "type": "string" }] } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Bob is forbidden', function () { pm.response.to.have.status(403); });"] } }]
+        },
+        {
+          "name": "Admin listing without token — 401",
+          "request": { "method": "GET", "url": "http://{{api_host}}/admin/events", "auth": { "type": "noauth" } },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Admin listing requires authentication', function () { pm.response.to.have.status(401); });"] } }]
+        },
+        {
+          "name": "Admin owner query — 400",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "http://{{api_host}}/admin/events?owner_id=1", "protocol": "http", "host": ["{{api_host}}"], "path": ["admin", "events"], "query": [{ "key": "owner_id", "value": "1", "disabled": false }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Admin cannot select an owner', function () { pm.response.to.have.status(400); });"] } }]
+        },
+        {
+          "name": "Admin unsupported query — 400",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "http://{{api_host}}/admin/events?limit=1", "protocol": "http", "host": ["{{api_host}}"], "path": ["admin", "events"], "query": [{ "key": "limit", "value": "1", "disabled": false }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] }
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Unsupported query parameters are rejected', function () { pm.response.to.have.status(400); });"] } }]
         }
       ]
     }

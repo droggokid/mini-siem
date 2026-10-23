@@ -144,6 +144,56 @@ authority; the user token is accepted only by API. Backend failures return HTTP
 502 and timeouts return HTTP 504. A timed-out submission may already be stored;
 do not retry it blindly. All stored events disappear when Event restarts.
 
+## API: GET /admin/events
+
+Log in as Admin using the earlier login example and copy the returned token:
+
+```sh
+ADMIN_TOKEN='<paste Admin access_token>'
+curl --fail --silent --show-error "$API_URL/admin/events" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Returns HTTP 200 with every owner's stored events, including Admin's own, or
+`[]` when empty. Admin's ordinary event list still returns only Admin's events:
+
+```sh
+curl --fail --silent --show-error "$API_URL/events" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Alice and Bob are authenticated but forbidden (HTTP 403):
+
+```sh
+curl --silent --show-error --include "$API_URL/admin/events" \
+  -H "Authorization: Bearer $ALICE_TOKEN"
+curl --silent --show-error --include "$API_URL/admin/events" \
+  -H "Authorization: Bearer $BOB_TOKEN"
+```
+
+No user token returns HTTP 401; malformed or expired user tokens also fail:
+
+```sh
+curl --silent --show-error --include "$API_URL/admin/events"
+```
+
+All query parameters and GET bodies are rejected (HTTP 400), even for Admin:
+
+```sh
+curl --silent --show-error --include "$API_URL/admin/events?owner_id=1" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+curl --silent --show-error --include "$API_URL/admin/events?limit=1" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+unset ADMIN_TOKEN
+```
+
+API checks the admin role before signing a separate 30-second `events:list_all`
+capability naming the authenticated principal and Event audience. Event checks
+that capability independently. Owner-scoped authority, raw user JWTs and
+detection job permissions cannot authorize all-event listing; listing authority
+cannot authorize writes, alert access or detection. Rejected requests do not
+change stored data. Admin's other operations remain owner-scoped.
+
 ## API: POST /detections/run and GET /alerts
 
 Continue with Alice's and Bob's tokens above. Submit five failures for Alice
@@ -240,6 +290,7 @@ API-issued permissions, including when a public user JWT is supplied:
 ```sh
 docker compose exec -T api wget -S -O- http://event:8080/jobs/events
 docker compose exec -T api wget -S -O- http://event:8080/alerts
+docker compose exec -T api wget -S -O- http://event:8080/admin/events
 docker compose exec -T api wget -S -O- --post-data='[]' http://event:8080/jobs/alerts
 docker compose exec -T api wget -S -O- --post-data='{}' http://detection:8080/detections/run
 ```

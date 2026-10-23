@@ -92,6 +92,13 @@ func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTo
 	events := eventHandler(eventURL, eventTokens)
 	router.POST("/events", tokens.Middleware(), events)
 	router.GET("/events", tokens.Middleware(), events)
+	router.GET("/admin/events", tokens.Middleware(), func(c *gin.Context) {
+		identity, _ := auth.FromContext(c.Request.Context())
+		if identity.Role != "admin" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
+	}, events)
 	router.GET("/alerts", tokens.Middleware(), events)
 	router.POST("/detections/run", tokens.Middleware(), detectionHandler(detectionURL, jobKey))
 
