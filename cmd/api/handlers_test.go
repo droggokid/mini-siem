@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/droggokid/mini-siem/cmd/api/internal/auth"
 	"github.com/droggokid/mini-siem/cmd/api/internal/users"
+	"github.com/droggokid/mini-siem/internal/auth"
 )
 
 func testAPI(t *testing.T) (http.Handler, *users.Store) {
@@ -29,7 +29,11 @@ func testAPI(t *testing.T) (http.Handler, *users.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newRouter(store, tokens), store
+	eventTokens, err := auth.New([]byte(strings.Repeat("e", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newRouter(store, tokens, "http://event:8080", eventTokens), store
 }
 
 func request(handler http.Handler, method, path, body, authorization string) *httptest.ResponseRecorder {

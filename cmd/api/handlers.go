@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/droggokid/mini-siem/cmd/api/internal/auth"
 	"github.com/droggokid/mini-siem/cmd/api/internal/users"
+	"github.com/droggokid/mini-siem/internal/auth"
 	"github.com/gin-gonic/gin"
 )
 
-func newRouter(store *users.Store, tokens *auth.Tokens) http.Handler {
+func newRouter(store *users.Store, tokens *auth.Tokens, eventURL string, eventTokens *auth.Tokens) http.Handler {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
 
@@ -66,7 +66,7 @@ func newRouter(store *users.Store, tokens *auth.Tokens) http.Handler {
 			return
 		}
 
-		token, err := tokens.Sign(user)
+		token, err := tokens.Sign(auth.Identity{ID: user.ID, Role: user.Role})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 			return
@@ -87,6 +87,10 @@ func newRouter(store *users.Store, tokens *auth.Tokens) http.Handler {
 		}
 		c.JSON(http.StatusOK, identity)
 	})
+
+	events := eventHandler(eventURL, eventTokens)
+	router.POST("/events", tokens.Middleware(), events)
+	router.GET("/events", tokens.Middleware(), events)
 
 	return router
 }

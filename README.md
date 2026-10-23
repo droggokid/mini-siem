@@ -6,10 +6,14 @@ The planned system has three separate Go services: API authenticates users, Even
 
 The services will run locally with Docker Compose. The users database will persist in an API-only volume. Events and alerts will stay in memory and be lost when Event restarts. HTTP endpoints and automated tests provide the interface; curl examples will show how to use it.
 
+Login, identity, event submission, and owner-scoped event listing are implemented.
+Detection, alerts, and admin endpoints remain planned.
+
 ## Project documents
 
 - [Design decisions](docs/design-decisions.md), updated as implementation choices evolve
 - [curl examples for all current endpoints](docs/curl.md)
+- [Apidog/Postman collection](docs/mini-siem.postman_collection.json) and [local environment](docs/mini-siem.postman_environment.json); import both and run the API folder after `make up`
 - [Initial SSDLC plan](docs/initial-plan.md), including requirements, architecture, access control, threat model, and lifecycle gates
 - [Component diagram](docs/diagrams/components.mmd), [data flow](docs/diagrams/data-flow.mmd), and [detection sequence](docs/diagrams/detection-sequence.mmd)
 
@@ -19,7 +23,7 @@ Requirements: Go 1.27.3, Docker with Docker Compose, make, and curl.
 
 API, Event, and Detection are separate executables. Each exposes
 `GET /health`, returning HTTP 200 with the body `ok`.
-API uses [Gin](https://github.com/gin-gonic/gin) for REST routing and JSON responses.
+API and Event use [Gin](https://github.com/gin-gonic/gin) for REST routing and JSON responses.
 
 Only API publishes a host port, at `127.0.0.1:8080`.
 Event and Detection are accessible through the internal Docker network.
@@ -61,6 +65,12 @@ invalidates existing tokens. Existing deployments switching from the host
 `.secrets/jwt-secret` get a new secret in the volume and must log in again;
 the host file is not automatically migrated.
 
+API also creates an independent service-authorization secret at
+`/run/event-auth/secret`. The separate `event-auth` volume is writable by API and
+mounted read-only by Event; Detection cannot access it. Event waits for API's
+healthcheck before starting, then reads this secret and independently validates
+each delegated event operation. The user-JWT secret is never shared with Event.
+
 ```sh
 make ps
 make logs
@@ -81,15 +91,28 @@ hashes, and initialization preserves existing accounts and hashes.
 Usernames are case-sensitive.
 
 Compose mounts `users-data` at `/data` only in API. Event and Detection have no
-database mount. The volume preserves both the database and signing secret through
+database mount. The volumes preserve the database and both secrets through
 container recreation and `docker compose down`; `docker compose down --volumes`
-deletes both and invalidates existing tokens.
+deletes them and invalidates existing tokens. Events are held only in Event's
+memory and disappear whenever that process restarts.
 
-For a local API run without Docker:
+For local runs without Docker, start API from the repository root:
 
 ```sh
-go run ./cmd/api
+EVENT_URL=http://127.0.0.1:8081 go run ./cmd/api
 ```
+
+Once API is listening, start Event in another terminal from the same directory:
+
+```sh
+EVENT_ADDR=127.0.0.1:8081 go run ./cmd/event
+```
+
+API creates `.secrets/event-secret`; Event reads it without creating or replacing
+it. Both services accept `EVENT_SECRET_FILE` to override that path. Keep this
+secret distinct from the user-JWT secret; API rejects reuse. `EVENT_URL` selects
+API's Event backend and defaults to `http://event:8080` for Compose.
+`EVENT_ADDR` controls Event's listen address and defaults to `:8080`.
 
 API loads `.secrets/jwt-secret` relative to the working directory by default.
 Set `JWT_SECRET_FILE` to override the path. API creates a missing parent directory
@@ -143,6 +166,48 @@ HTTP 413, and an unsupported content type returns HTTP 415. Authentication
 responses are not cached, and credentials and tokens are not logged.
 The local HTTP setup is for the assignment; use TLS before exposing it publicly.
 
+### Submit and list events
+
+Use Alice's access token from login:
+
+```sh
+TOKEN='<Alice access_token from login>'
+curl --fail --silent --show-error http://127.0.0.1:8080/events \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"type":"login.failed","source_ip":"192.0.2.1"}'
+
+curl --fail --silent --show-error http://127.0.0.1:8080/events \
+  -H "Authorization: Bearer $TOKEN"
+unset TOKEN
+```
+
+`POST /events` returns HTTP 201 with `id`, `owner_id`, `type`, `source_ip`, and
+`ingested_at`. Event generates the ID and UTC ingestion timestamp. The client
+supplies only a nonblank event `type` and a valid IPv4 or IPv6 `source_ip`.
+`GET /events` returns HTTP 200 with only the authenticated owner's events,
+or `[]` when there are none. Bob and Admin use their own tokens and see only
+their own events.
+
+Ownership always comes from the authenticated identity. JSON fields such as
+`owner_id`, event IDs, and timestamps are rejected, and owner query parameters
+are not supported. API delegates each call using a separate 30-second token
+scoped to Event, that owner, and the submit or list action. Event checks this
+authority independently; a user JWT alone cannot authorize a direct Event call.
+
+Both endpoints require authentication (HTTP 401). Event requests have a 64 KiB
+body limit (HTTP 413); malformed JSON, invalid types/IPs, or unsupported fields
+return HTTP 400, and unsupported POST content types return HTTP 415. GET accepts
+no body or query parameters. Invalid requests do not store events. Responses are
+not cached. An unavailable backend returns HTTP 502; a timeout returns HTTP 504.
+Submissions are not automatically retried, because a timed-out request may
+already have been stored.
+
+The service secret grants signing authority to both API and Event; keep it
+private. Tokens can be replayed until expiry, the local HTTP network is not
+encrypted, and the in-memory store has no retention limit. See
+[the authorization decision and limitations](docs/design-decisions.md#dd-008--scoped-inter-service-authorization).
+
 ### Verify
 
 After `make up`, verify the running setup:
@@ -154,7 +219,9 @@ make verify
 This checks all three health endpoints and stops after printing
 `All three health checks passed.`
 
-Run the Go tests, including authentication checks, with `make test`. For manual requests, see
+Run the Go tests, including authentication, event isolation, and service-authority
+checks, with `make test`. Run `go test -race ./...` to include race detection.
+For manual requests, see
 [curl examples](docs/curl.md).
 
 Check API from the host directly:

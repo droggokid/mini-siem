@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/droggokid/mini-siem/cmd/api/internal/auth"
 	"github.com/droggokid/mini-siem/cmd/api/internal/users"
+	"github.com/droggokid/mini-siem/internal/auth"
 )
 
 func main() {
@@ -38,6 +39,31 @@ func run() error {
 		return err
 	}
 
+	eventSecretPath := os.Getenv("EVENT_SECRET_FILE")
+	if eventSecretPath == "" {
+		eventSecretPath = ".secrets/event-secret"
+	}
+	eventSecret, err := readOrCreateJWTSecret(eventSecretPath)
+	if err != nil {
+		return fmt.Errorf("cannot load Event authorization secret file: %w", err)
+	}
+	if bytes.Equal(bytes.TrimSpace(secret), bytes.TrimSpace(eventSecret)) {
+		return errors.New("Event authorization secret must differ from the user JWT secret")
+	}
+	eventTokens, err := auth.New(bytes.TrimSpace(eventSecret))
+	if err != nil {
+		return fmt.Errorf("invalid Event authorization secret: %w", err)
+	}
+	eventURL := os.Getenv("EVENT_URL")
+	if eventURL == "" {
+		eventURL = "http://event:8080"
+	}
+	endpoint, err := url.Parse(eventURL)
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
+		endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
+		return errors.New("EVENT_URL must be an HTTP service URL without credentials, query, fragment or path")
+	}
+
 	path := os.Getenv("USERS_DB_PATH")
 	if path == "" {
 		path = "users.db"
@@ -52,7 +78,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              ":8080",
-		Handler:           newRouter(store, tokens),
+		Handler:           newRouter(store, tokens, eventURL, eventTokens),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -8,8 +8,17 @@ services:
     environment:
       USERS_DB_PATH: /data/users.db
       JWT_SECRET_FILE: /data/jwt-secret
+      EVENT_SECRET_FILE: /run/event-auth/secret
+      EVENT_URL: http://event:8080
     volumes:
       - users-data:/data
+      - event-auth:/run/event-auth
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
     networks:
       - default
       - backend
@@ -18,6 +27,13 @@ services:
     build:
       context: .
       dockerfile: cmd/event/Dockerfile
+    environment:
+      EVENT_SECRET_FILE: /run/event-auth/secret
+    volumes:
+      - event-auth:/run/event-auth:ro
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
       - backend
 
@@ -30,6 +46,7 @@ services:
 
 volumes:
   users-data: {}
+  event-auth: {}
 
 networks:
   default: {}
