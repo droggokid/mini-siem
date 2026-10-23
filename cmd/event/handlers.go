@@ -90,6 +90,16 @@ func newRouter(store *events.Store, tokens *auth.Tokens, jobKey ed25519.PublicKe
 	}
 	router.GET("/events", tokens.EventMiddleware(auth.ListEvents), listEvents)
 	router.GET("/jobs/events", auth.JobMiddleware(jobKey, auth.EventService, auth.ListEvents), listEvents)
+	router.GET("/admin/events", tokens.EventMiddleware(auth.ListAllEvents), func(c *gin.Context) {
+		if _, ok := readRequest(c); !ok {
+			return
+		}
+		all := store.ListAll()
+		if all == nil {
+			all = []events.Event{}
+		}
+		c.JSON(http.StatusOK, all)
+	})
 
 	registerAlerts(router, store, tokens, jobKey)
 	return router

@@ -15,7 +15,7 @@ func TestSignAndValidateEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, action := range []string{AddEvent, ListEvents, ListAlerts} {
+	for _, action := range []string{AddEvent, ListEvents, ListAlerts, "events:list_all"} {
 		raw, err := tokens.SignEvent(42, action)
 		if err != nil {
 			t.Fatal(err)

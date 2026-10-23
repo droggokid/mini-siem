@@ -1,6 +1,7 @@
 package minisiem_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,6 +56,9 @@ func TestDetectionIntegration(t *testing.T) {
 			t.Fatal("login did not return a token")
 		}
 		tokens[user] = result.Token
+	}
+	if data := call("GET", apiURL+"/admin/events", "", tokens["Admin"], 200); strings.TrimSpace(string(data)) != "[]" {
+		t.Fatalf("fresh admin listing: %s", data)
 	}
 
 	for _, path := range []string{"/detections/run", "/alerts"} {
@@ -126,11 +130,68 @@ func TestDetectionIntegration(t *testing.T) {
 	submit("Admin", 5)
 	run("Admin", 5, 1)
 
+	var eventSnapshots, alertSnapshots [3][]byte
+	for index, user := range []string{"Alice", "Bob", "Admin"} {
+		data := call("GET", apiURL+"/events", "", tokens[user], 200)
+		var events []struct {
+			OwnerID int64 `json:"owner_id"`
+		}
+		if json.Unmarshal(data, &events) != nil || len(events) != 5 {
+			t.Fatalf("%s event listing: %s", user, data)
+		}
+		for _, event := range events {
+			if event.OwnerID != int64(index+1) {
+				t.Fatalf("%s received another owner's event: %+v", user, event)
+			}
+		}
+		eventSnapshots[index] = data
+		alertSnapshots[index] = call("GET", apiURL+"/alerts", "", tokens[user], 200)
+	}
+	allEvents := call("GET", apiURL+"/admin/events", "", tokens["Admin"], 200)
+	var all []struct {
+		OwnerID int64 `json:"owner_id"`
+	}
+	if json.Unmarshal(allEvents, &all) != nil || len(all) != 15 {
+		t.Fatalf("admin all-events listing: %s", allEvents)
+	}
+	owners := make(map[int64]int)
+	for _, event := range all {
+		owners[event.OwnerID]++
+	}
+	if len(owners) != 3 || owners[1] != 5 || owners[2] != 5 || owners[3] != 5 {
+		t.Fatalf("admin listing omitted or expanded owners: %v", owners)
+	}
+	call("GET", apiURL+"/admin/events", "", "", 401)
+	for _, user := range []string{"Alice", "Bob"} {
+		call("GET", apiURL+"/admin/events", "", tokens[user], 403)
+	}
+	for _, user := range []string{"Alice", "Bob", "Admin"} {
+		call("GET", apiURL+"/events?owner_id=1", "", tokens[user], 400)
+		call("GET", apiURL+"/alerts?owner_id=1", "", tokens[user], 400)
+		call("POST", apiURL+"/detections/run", `{"owner_id":1}`, tokens[user], 400)
+		call("POST", apiURL+"/events", `{"type":"login.failed","source_ip":"192.0.2.1","owner_id":1}`, tokens[user], 400)
+	}
+	call("GET", apiURL+"/admin/events?owner_id=1", "", tokens["Admin"], 400)
+	call("GET", apiURL+"/admin/events?limit=1", "", tokens["Admin"], 400)
+	call("GET", apiURL+"/admin/events", `{"owner_id":1}`, tokens["Admin"], 400)
+	if after := call("GET", apiURL+"/admin/events", "", tokens["Admin"], 200); !bytes.Equal(after, allEvents) {
+		t.Fatal("rejected requests changed all-events listing")
+	}
+	for index, user := range []string{"Alice", "Bob", "Admin"} {
+		if after := call("GET", apiURL+"/events", "", tokens[user], 200); !bytes.Equal(after, eventSnapshots[index]) {
+			t.Fatalf("rejected requests changed %s's events", user)
+		}
+		if after := call("GET", apiURL+"/alerts", "", tokens[user], 200); !bytes.Equal(after, alertSnapshots[index]) {
+			t.Fatalf("rejected requests changed %s's alerts", user)
+		}
+	}
+
 	if eventURL != "" {
 		for _, token := range []string{"", tokens["Alice"]} {
 			call("GET", eventURL+"/jobs/events", "", token, 401)
 			call("POST", eventURL+"/jobs/alerts", "[]", token, 401)
 			call("GET", eventURL+"/alerts", "", token, 401)
+			call("GET", eventURL+"/admin/events", "", token, 401)
 			call("POST", detectionURL+"/detections/run", "{}", token, 401)
 		}
 	}

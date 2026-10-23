@@ -1,12 +1,12 @@
 # Mini-SIEM
 
-Mini-SIEM is a small security event monitor for Assignment I. Alice, Bob, and Admin submit events and inspect their own events and alerts. A detection run checks the caller's events for at least five failed logins from the same IP within five minutes and saves alerts. The separate admin-wide event operation remains planned.
+Mini-SIEM is a small security event monitor for Assignment I. Alice, Bob, and Admin submit events and inspect their own events and alerts. A detection run checks the caller's events for at least five failed logins from the same IP within five minutes and saves alerts. Admin can also list every user's events through a separate privileged operation.
 
 The system has three separate Go services: API authenticates users, Event stores events and alerts, and Detection applies the independently versioned `eventkit` Go module. Users log in with seeded accounts stored in SQLite and receive short-lived JWTs. API alone accesses the users database and establishes scoped authority for inter-service calls. The detection run calls all three services.
 
 The services run locally with Docker Compose. The users database persists in an API-only volume. Events and alerts stay in memory and are lost when Event restarts. HTTP endpoints, automated tests, and curl examples provide the interface.
 
-Login, identity, event submission/listing, synchronous detection (FR-04), and owner-scoped alert listing (FR-05) are implemented.
+Login, identity, event submission/listing, synchronous detection (FR-04), owner-scoped alert listing (FR-05), and admin event listing (FR-06) are implemented.
 
 ## Project documents
 
@@ -285,6 +285,30 @@ The service secret grants signing authority to both API and Event; keep it
 private. Tokens can be replayed until expiry, the local HTTP network is not
 encrypted, and the in-memory store has no retention limit. See
 [the authorization decision and limitations](docs/design-decisions.md#dd-008--scoped-inter-service-authorization).
+
+### Admin: list all events
+
+Log in as `Admin` with `admin-password`, then use the returned access token:
+
+```sh
+ADMIN_TOKEN='<Admin access_token from login>'
+curl --fail --silent --show-error http://127.0.0.1:8080/admin/events \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+unset ADMIN_TOKEN
+```
+
+`GET /admin/events` returns HTTP 200 with all stored events, including Admin's
+own, or `[]` if none exist. Alice and Bob receive HTTP 403; missing, malformed
+or expired user JWTs receive HTTP 401. Query parameters and GET bodies are
+rejected with HTTP 400, including client-supplied owners.
+
+API checks the authenticated `admin` role before issuing `events:list_all`
+authority with the existing separate API-to-Event signing key. Event independently
+validates this exact action, principal, Event audience and expiry before listing
+across owners. Ordinary authority, user JWTs and detection job permissions cannot
+authorize this operation. The privileged capability cannot authorize other
+operations. Admin's ordinary `/events`, `/alerts` and `/detections/run` remain
+limited to Admin's own records.
 
 ### Run detection and list alerts
 
